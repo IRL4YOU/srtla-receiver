@@ -48,7 +48,7 @@ stage() {
   [ "$f" -gt "$w" ] && f=$w
   local fill rest
   fill=$(printf '%*s' "$f" '' | tr ' ' '#'); rest=$(printf '%*s' "$((w-f))" '' | tr ' ' '-')
-  printf '\r%s[%s%s]%s %3d%%  %-44s' "$C_C" "$fill" "$rest" "$C_0" "$p" "$1" >&3
+  printf '\r%s[%s%s]%s %3d%%  %-44s\033[K' "$C_C" "$fill" "$rest" "$C_0" "$p" "$1" >&3
 }
 bei_ende() {
   local rc=$?
@@ -274,7 +274,7 @@ if [ -z "$ADRESSE" ]; then
     ADRESSE="http://localhost:8181/schluessel  (nur per SSH-Tunnel: ssh -L 8181:127.0.0.1:8181 BENUTZER@SERVER)"
   fi
 fi
-[ "$VERBOSE" -eq 0 ] && { printf '\r%s[%s]%s 100%%  %-44s\n' "$C_G" "##############################" "$C_0" "Fertig" >&3; }
+[ "$VERBOSE" -eq 0 ] && { printf '\r%s[%s]%s 100%%  %-44s\033[K\n' "$C_G" "##############################" "$C_0" "Fertig" >&3; }
 {
 echo
 printf '%s================================================================%s\n' "$C_G" "$C_0"
