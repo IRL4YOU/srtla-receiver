@@ -2,10 +2,9 @@
 
 Empfänger für IRL-Streaming: nimmt gebündelte Mobilfunk-Übertragungen (SRTLA) und reines SRT an, gibt den Stream per SRT an OBS weiter und zeigt Statistiken an (auch für NOALBS). Mit Benutzer- und Schlüsselverwaltung im Browser, automatischen Sicherungen und Schutz gegen Passwort-Raten.
 
-**Installation (empfohlen):** Das Paket mit `install.sh` richtet Empfänger, `fail2ban`, auf Wunsch HTTPS und SSH-Absicherung ein:
+**Installation (empfohlen):** Ein Befehl auf einem frischen Ubuntu- oder Debian-Server aktualisiert das System, richtet Git, Docker, `fail2ban`, auf Wunsch HTTPS und SSH-Absicherung ein und installiert den Empfänger:
 
-    git clone https://github.com/IRL4YOU/srtla-receiver.git
-    cd srtla-receiver && bash install.sh --caddy meine.domain.de --ssh-haerten
+    wget -qO get.sh https://raw.githubusercontent.com/IRL4YOU/srtla-receiver/main/get.sh && bash get.sh --caddy meine.domain.de --ssh-haerten
 
 Anleitung und Quelltext der geänderten Open-Source-Teile: https://github.com/IRL4YOU/srtla-receiver
 
