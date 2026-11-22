@@ -66,12 +66,19 @@ if [ "$MODE" = lan ] && [ "$JA" -eq 0 ] && [ "$NUR_SCHUTZ" -eq 0 ] && [ -t 0 ]; 
   printf '\n%sWo steht der Server?%s\n   1) Zuhause / eigenes Netz       (Verwaltung ueber IP und Port, unverschluesselt)\n   2) Rechenzentrum / Internet     (Verwaltung per HTTPS)\n%sAuswahl (Enter = 1):%s ' "$C_Y" "$C_0" "$C_Y" "$C_0" >&3
   read -r ANTW
   if [ "$(printf '%s' "$ANTW" | tr -d ' \r')" = 2 ]; then
-    printf '\n%sFuer die verschluesselte Verwaltung (Let'"'"'s Encrypt) brauchst du eine Domain, die auf diesen Server zeigt; Ports 80 und 443 muessen offen sein.%s\n' "$C_C" "$C_0" >&3
+    printf '\n%sFuer die verschluesselte Verwaltung (Let'"'"'s Encrypt) muessen die Ports 80 und 443 aus dem Internet erreichbar sein.%s\n' "$C_C" "$C_0" >&3
     while true; do
-      printf '%sDomain (z. B. meine.domain.de), oder "ohne" fuer ein selbst signiertes Zertifikat:%s ' "$C_Y" "$C_0" >&3
+      printf '%sEigene Domain eingeben (z. B. meine.domain.de, sie muss auf diesen Server zeigen). Enter = automatische Adresse aus der IP (sslip.io):%s ' "$C_Y" "$C_0" >&3
       read -r DOM
       DOM=$(printf '%s' "$DOM" | tr -d ' \r')
-      if [ "$DOM" = ohne ]; then MODE=httpsip; break
+      if [ -z "$DOM" ]; then
+        PUBIP=$(curl -4 -fsS -m 8 https://api.ipify.org 2>/dev/null | tr -d ' \r\n')
+        if ! printf '%s' "$PUBIP" | grep -Eq '^[0-9]{1,3}(\.[0-9]{1,3}){3}$'; then
+          PUBIP=$(ip -4 -o addr show scope global 2>/dev/null | awk '$2 !~ /^(docker|br-|veth)/ {split($4,a,"/"); print a[1]; exit}')
+        fi
+        if printf '%s' "$PUBIP" | grep -Eq '^[0-9]{1,3}(\.[0-9]{1,3}){3}$'; then
+          CADDY_DOMAIN="$(printf '%s' "$PUBIP" | tr . -).sslip.io"; MODE=domain; break
+        else printf '%sDie Adresse des Servers konnte nicht ermittelt werden. Bitte eine Domain eingeben.%s\n' "$C_R" "$C_0" >&3; fi
       elif printf '%s' "$DOM" | grep -Eq '^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?\.[A-Za-z]{2,}$'; then CADDY_DOMAIN="$DOM"; MODE=domain; break
       else printf '%sKeine gueltige Domain.%s\n' "$C_R" "$C_0" >&3; fi
     done
@@ -119,7 +126,7 @@ $SUDO chmod 700 secrets 2>/dev/null; $SUDO chown 0:0 secrets 2>/dev/null || true
 stage "Empfaenger starten"
 if [ "$MODE" = lan ]; then
   # Verwaltung direkt ueber IP und Port erreichbar machen (Override, damit compose.yaml unveraendert bleibt und Updates weiter gehen)
-  printf 'services:\n  receiver:\n    ports: !override\n      - "8383:8383/udp"\n      - "8384:8384/udp"\n      - "127.0.0.1:8282:8282/udp"\n      - "8181:8181/tcp"\n' > compose.override.yaml
+  printf 'services:\n  receiver:\n    ports: !override\n      - "8383:8383/udp"\n      - "8384:8384/udp"\n      - "8282:8282/udp"\n      - "8181:8181/tcp"\n' > compose.override.yaml
 fi
 $D compose up -d 2>&1 | tail -3
 i=0; h=""
@@ -277,7 +284,7 @@ printf ' Verwaltung:   %s%s%s\n' "$C_C" "$ADRESSE" "$C_0"
 if [ -n "$EINMAL" ]; then printf ' Einmalcode:   %s%s%s   (nur fuer die erste Anmeldung)\n' "$C_Y" "$EINMAL" "$C_0"; else printf ' Einmalcode:   schon eingerichtet\n'; fi
 printf ' Senden:       %sSRTLA %s:8383%s   %sSRT %s:8384%s\n' "$C_C" "$HOST" "$C_0" "$C_C" "$HOST" "$C_0"
 [ "$SELBST" -eq 1 ] && printf ' Zertifikat:   Der Browser warnt einmal (selbst signiert). Auf "Erweitert" und "Weiter" klicken. Mit eigener Domain entfaellt das (--caddy DOMAIN).\n'
-if [ "$MODE" = lan ]; then printf ' Ports:        8383/udp und 8384/udp freigeben; 8181/tcp nur im eigenen Netz (Router und Firewall)\n'; else printf ' Ports freigeben: 8383/udp, 8384/udp, 443/tcp%s (Router und Firewall)\n' "$([ -n "$CADDY_DOMAIN" ] && echo ', 80/tcp')"; fi
+if [ "$MODE" = lan ]; then printf ' Ports:        8383/udp, 8384/udp (Senden) und 8282/udp (OBS) freigeben; 8181/tcp nur im eigenen Netz\n'; else printf ' Ports freigeben: 8383/udp, 8384/udp (Senden), 8282/udp (OBS), 443/tcp%s (Router und Firewall)\n' "$([ -n "$CADDY_DOMAIN" ] && echo ', 80/tcp')"; fi
 printf ' Sicherung:    Ordner secrets/ zusammen mit den Sicherungen aufbewahren, nicht weitergeben.\n'
 printf ' Update:       bash update.sh   (in %s)\n' "$(pwd)"
 if [ -n "$NOTES" ]; then printf '%s Hinweise:%s\n%s' "$C_Y" "$C_0" "$NOTES"; fi
