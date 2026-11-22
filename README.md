@@ -6,19 +6,19 @@ Empfänger für IRL-Streaming: nimmt gebündelte Mobilfunk-Übertragungen (SRTLA
 
 ## Schnellstart
 
-```bash
-git clone https://github.com/IRL4YOU/srtla-receiver.git
-```
+Ein Befehl auf einem frischen Ubuntu- oder Debian-Server (aktualisiert das System, richtet Git und Docker ein, installiert alles):
 
 ```bash
-cd srtla-receiver && bash install.sh --caddy meine.domain.de --ssh-haerten
+wget -qO get.sh https://raw.githubusercontent.com/IRL4YOU/srtla-receiver/main/get.sh && bash get.sh --caddy meine.domain.de --ssh-haerten
 ```
+
+Ohne Domain: `bash get.sh` ohne Optionen.
 
 Die ganze Anleitung steht in [ANLEITUNG.md](ANLEITUNG.md), Optionen und Hintergründe in [DETAILS.md](DETAILS.md).
 
 ## Inhalt
 
-- `install.sh`, `update.sh`, `compose.yaml`, `config/`, `fail2ban/`: das Paket.
+- `get.sh` (alles in einem Schritt), `install.sh`, `update.sh`, `compose.yaml`, `config/`, `fail2ban/`: das Paket.
 - `quellen/`: Dockerfile und unsere Patches für die Open-Source-Teile (Quelltext-Angebot).
 - [NOTICE.md](NOTICE.md): Fremdkomponenten und Lizenzen. [CHANGELOG.md](CHANGELOG.md): Änderungen. [SECURITY.md](SECURITY.md): Sicherheit.
 
