@@ -135,6 +135,7 @@ if [ "$F2B" -eq 1 ]; then
     fi
     if [ -n "$DATADIR" ] && $SUDO test -d "$DATADIR"; then
       echo "$DATADIR/fail2ban-events.log" | $SUDO tee /etc/irl4you/f2b-logfile >/dev/null
+      $SUDO touch "$DATADIR/fail2ban-events.log" && $SUDO chmod 644 "$DATADIR/fail2ban-events.log"
       ok "Sperren werden im Sicherheitsprotokoll der Verwaltung angezeigt (ohne Adressen)"
     else
       note "Datenvolumen nicht gefunden: Sperren erscheinen nicht in der Verwaltung (IRL4YOU_DATA_DIR=... setzen)"
