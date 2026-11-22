@@ -8,7 +8,9 @@
 #   --ssh-haerten    SSH nur noch mit Schluessel (Passwort-Anmeldung aus). Nur wenn ein Schluessel hinterlegt ist.
 #   --ja             Rueckfragen automatisch mit Ja beantworten.
 #   --ausfuehrlich   alle Meldungen zeigen statt nur den Fortschrittsbalken (Protokoll liegt sonst in /tmp/irl4you-install-*.log)
-#   --ohne-https     kein Caddy: Verwaltung nur per SSH-Tunnel (sonst: ohne --caddy DOMAIN gibt es HTTPS mit selbst signiertem Zertifikat ueber die IP)
+#   (ohne --caddy)  Verwaltung direkt ueber IP und Port: http://IP:8181/schluessel (fuer das eigene Netz, unverschluesselt)
+#   --https-ip       stattdessen HTTPS ueber die IP mit selbst signiertem Zertifikat (Port 443, Browser warnt einmal)
+#   --ohne-https     Verwaltung nur lokal auf dem Server (Zugriff per SSH-Tunnel)
 #   --nur-schutz     nur fail2ban/SSH/Caddy einrichten (der Empfaenger laeuft schon, z. B. bei bestehenden Servern)
 #   Umgebung: IRL4YOU_IGNORE_NETS="192.168.1.0/24" (eigene Netze/Adressen, die nie gesperrt werden; empfohlen: das Heimnetz),
 #             IRL4YOU_IGNORE_SSH_CLIENT=1 (Adresse der aktuellen SSH-Sitzung nie sperren; 0 nur fuer Tests),
@@ -16,7 +18,7 @@
 set -u
 cd "$(dirname "$0")" || exit 1
 
-CADDY_DOMAIN=""; SSH_HAERTEN=0; JA=0; F2B=1; NUR_SCHUTZ=0; VERBOSE=0; OHNE_HTTPS=0
+CADDY_DOMAIN=""; SSH_HAERTEN=0; JA=0; F2B=1; NUR_SCHUTZ=0; VERBOSE=0; OHNE_HTTPS=0; HTTPS_IP=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --caddy) CADDY_DOMAIN="${2:-}"; shift 2 ;;
@@ -26,6 +28,7 @@ while [ $# -gt 0 ]; do
     --nur-schutz) NUR_SCHUTZ=1; shift ;;
     --ausfuehrlich) VERBOSE=1; shift ;;
     --ohne-https) OHNE_HTTPS=1; shift ;;
+    --https-ip) HTTPS_IP=1; shift ;;
     *) echo "Unbekannte Option: $1"; exit 1 ;;
   esac
 done
@@ -55,6 +58,8 @@ bei_ende() {
   fi
 }
 trap bei_ende EXIT
+
+if [ -n "$CADDY_DOMAIN" ]; then MODE=domain; elif [ "$HTTPS_IP" -eq 1 ]; then MODE=httpsip; elif [ "$OHNE_HTTPS" -eq 1 ]; then MODE=lokal; else MODE=lan; fi
 
 if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo"; fi
 if docker info >/dev/null 2>&1; then D="docker"; else D="$SUDO docker"; fi
@@ -95,6 +100,10 @@ $SUDO chmod 700 secrets 2>/dev/null; $SUDO chown 0:0 secrets 2>/dev/null || true
 # secrets/ gehoert jetzt root; der Docker-Daemon (root) kann die Datei einbinden.
 
 stage "Empfaenger starten"
+if [ "$MODE" = lan ]; then
+  # Verwaltung direkt ueber IP und Port erreichbar machen (Override, damit compose.yaml unveraendert bleibt und Updates weiter gehen)
+  printf 'services:\n  receiver:\n    ports: !override\n      - "8383:8383/udp"\n      - "8384:8384/udp"\n      - "127.0.0.1:8282:8282/udp"\n      - "8181:8181/tcp"\n' > compose.override.yaml
+fi
 $D compose up -d 2>&1 | tail -3
 i=0; h=""
 CID=$($D compose ps -q receiver | head -1)
@@ -212,7 +221,7 @@ stage "HTTPS einrichten"
 ADRESSE=""; HOST=""; SELBST=0
 IPS=$(ip -4 -o addr show scope global 2>/dev/null | awk '$2 !~ /^(docker|br-|veth)/ {split($4,a,"/"); print a[1]}')
 IP1=$(echo "$IPS" | head -1)
-if [ "$OHNE_HTTPS" -eq 0 ]; then
+if [ "$MODE" = domain ] || [ "$MODE" = httpsip ]; then
   command -v caddy >/dev/null 2>&1 || $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y caddy >/dev/null 2>&1
   if command -v caddy >/dev/null 2>&1; then
     if [ -n "$CADDY_DOMAIN" ]; then
@@ -232,7 +241,13 @@ if [ "$OHNE_HTTPS" -eq 0 ]; then
   fi
 fi
 if [ -z "$ADRESSE" ]; then
-  ADRESSE="http://localhost:8181/schluessel  (nur per SSH-Tunnel: ssh -L 8181:127.0.0.1:8181 BENUTZER@SERVER)"; HOST="${IP1:-SERVER}"
+  HOST="${IP1:-SERVER}"
+  if [ "$MODE" = lan ]; then
+    ADRESSE="http://$HOST:8181/schluessel"
+    note "Die Verwaltung ist unverschluesselt: nur im eigenen Netz verwenden. Fuer das Internet HTTPS mit Domain einrichten (--caddy DOMAIN)."
+  else
+    ADRESSE="http://localhost:8181/schluessel  (nur per SSH-Tunnel: ssh -L 8181:127.0.0.1:8181 BENUTZER@SERVER)"
+  fi
 fi
 [ "$VERBOSE" -eq 0 ] && { printf '\r%s[%s]%s 100%%  %-44s\n' "$C_G" "##############################" "$C_0" "Fertig" >&3; }
 {
@@ -244,7 +259,7 @@ printf ' Verwaltung:   %s%s%s\n' "$C_C" "$ADRESSE" "$C_0"
 if [ -n "$EINMAL" ]; then printf ' Einmalcode:   %s%s%s   (nur fuer die erste Anmeldung)\n' "$C_Y" "$EINMAL" "$C_0"; else printf ' Einmalcode:   schon eingerichtet\n'; fi
 printf ' Senden:       %sSRTLA %s:8383%s   %sSRT %s:8384%s\n' "$C_C" "$HOST" "$C_0" "$C_C" "$HOST" "$C_0"
 [ "$SELBST" -eq 1 ] && printf ' Zertifikat:   Der Browser warnt einmal (selbst signiert). Auf "Erweitert" und "Weiter" klicken. Mit eigener Domain entfaellt das (--caddy DOMAIN).\n'
-printf ' Ports freigeben: 8383/udp, 8384/udp, 443/tcp%s (Router und Firewall)\n' "$([ -n "$CADDY_DOMAIN" ] && echo ', 80/tcp')"
+if [ "$MODE" = lan ]; then printf ' Ports:        8383/udp und 8384/udp freigeben; 8181/tcp nur im eigenen Netz (Router und Firewall)\n'; else printf ' Ports freigeben: 8383/udp, 8384/udp, 443/tcp%s (Router und Firewall)\n' "$([ -n "$CADDY_DOMAIN" ] && echo ', 80/tcp')"; fi
 printf ' Sicherung:    Ordner secrets/ zusammen mit den Sicherungen aufbewahren, nicht weitergeben.\n'
 printf ' Update:       bash update.sh   (in %s)\n' "$(pwd)"
 if [ -n "$NOTES" ]; then printf '%s Hinweise:%s\n%s' "$C_Y" "$C_0" "$NOTES"; fi
