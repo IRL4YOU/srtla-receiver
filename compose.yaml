@@ -10,7 +10,7 @@ services:
     ports:
       - "8383:8383/udp"                         # Senden (SRTLA), von aussen erreichbar
       - "8384:8384/udp"                         # Senden (reines SRT, gleiche Stream-ID), von aussen erreichbar
-      - "127.0.0.1:8282:8282/udp"               # OBS-Wiedergabe, nur lokal (fuer extern: Adresse vor dem Doppelpunkt aendern)
+      - "8282:8282/udp"                         # OBS-Wiedergabe (OBS holt den Stream hier ab; geschuetzt durch den OBS-Schluessel)
       - "127.0.0.1:8181:8181/tcp"               # Verwaltung und Statistik, nur lokal (Zugriff per SSH-Tunnel)
     secrets:
       - irl4you_enc_key                         # Schluessel zur Verschluesselung der gespeicherten Schluessel, getrennt vom Datenvolumen
