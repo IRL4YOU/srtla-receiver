@@ -2,6 +2,24 @@
 
 Du brauchst einen Linux-Server (Ubuntu oder Debian) mit Docker und Docker Compose, SSH-Zugang mit `sudo` und für HTTPS eine Domain, die auf den Server zeigt.
 
+## Schnellstart: ein Befehl
+
+Aktualisiert das System, richtet Git und Docker ein, holt das Paket und installiert alles. Als normaler Benutzer mit `sudo` ausführen.
+
+Mit Domain (HTTPS) und SSH nur mit Schlüssel:
+
+```bash
+wget -qO get.sh https://raw.githubusercontent.com/IRL4YOU/srtla-receiver/main/get.sh && bash get.sh --caddy meine.domain.de --ssh-haerten
+```
+
+Ohne Domain (Zugriff per SSH-Tunnel):
+
+```bash
+wget -qO get.sh https://raw.githubusercontent.com/IRL4YOU/srtla-receiver/main/get.sh && bash get.sh
+```
+
+Am Ende zeigt das Skript den **Einmalcode**. Das Paket liegt danach in `~/srtla-receiver` (dort später auch `bash update.sh`). Weiter mit Schritt 3. Wer es lieber von Hand macht, nimmt die Schritte 0 bis 2.
+
 ## 0. Frischer Server: Git und Docker installieren
 
 Nur nötig, wenn beides noch fehlt:
