@@ -12,13 +12,13 @@ Mit Domain (HTTPS) und SSH nur mit Schlüssel:
 wget -qO get.sh https://raw.githubusercontent.com/IRL4YOU/srtla-receiver/main/get.sh && bash get.sh --caddy meine.domain.de --ssh-haerten
 ```
 
-Ohne Domain (Zugriff per SSH-Tunnel):
+Ohne Domain (Verwaltung im eigenen Netz über IP und Port):
 
 ```bash
 wget -qO get.sh https://raw.githubusercontent.com/IRL4YOU/srtla-receiver/main/get.sh && bash get.sh
 ```
 
-Am Ende zeigt das Skript den **Einmalcode**. Das Paket liegt danach in `~/srtla-receiver` (dort später auch `bash update.sh`). Weiter mit Schritt 3. Wer es lieber von Hand macht, nimmt die Schritte 0 bis 2.
+Während der Installation läuft nur ein Fortschrittsbalken. Am Ende zeigt das Skript in einer Zusammenfassung die **Adresse der Verwaltung**, den **Einmalcode**, die Sendeadressen und die freizugebenden Ports. Das Paket liegt danach in `~/srtla-receiver` (dort später auch `bash update.sh`). Weiter mit Schritt 3. Wer es lieber von Hand macht, nimmt die Schritte 0 bis 2.
 
 ## 0. Frischer Server: Git und Docker installieren
 
@@ -50,7 +50,7 @@ Mit Domain (HTTPS) und SSH nur mit Schlüssel:
 bash install.sh --caddy meine.domain.de --ssh-haerten
 ```
 
-Ohne Domain (Zugriff per SSH-Tunnel):
+Ohne Domain (Verwaltung im eigenen Netz über IP und Port):
 
 ```bash
 bash install.sh
@@ -60,11 +60,7 @@ Das Skript lädt das Image, startet den Empfänger, richtet `fail2ban` ein und z
 
 ## 3. Verwaltung einrichten
 
-1. `https://meine.domain.de/schluessel` öffnen. Ohne Domain zuerst den Tunnel starten und dann `http://localhost:8181/schluessel` öffnen:
-
-   ```bash
-   ssh -L 8181:127.0.0.1:8181 benutzer@server
-   ```
+1. Die Adresse aus der Zusammenfassung öffnen (`https://meine.domain.de/schluessel` oder ohne Domain `http://<IP>:8181/schluessel`). Ohne Domain ist die Verbindung unverschlüsselt: nur im eigenen Netz verwenden. Im Rechenzentrum immer mit Domain installieren.
 
 2. Einmalcode eingeben und ein Administrator-Passwort setzen (mindestens 12 Zeichen).
 3. Benutzer und Stream anlegen. Die Verwaltung zeigt dann Adressen und Schlüssel zum Kopieren.
@@ -75,7 +71,8 @@ Das Skript lädt das Image, startet den Empfänger, richtet `fail2ban` ein und z
 |---|---|
 | `8383/udp` | Senden per SRTLA (App, Handy, Box) |
 | `8384/udp` | Senden per reinem SRT |
-| `443/tcp`, `80/tcp` | Verwaltung, Statistik und NOALBS per HTTPS (nur mit Domain) |
+| `443/tcp`, `80/tcp` | Verwaltung, Statistik und NOALBS per HTTPS (nur mit Domain; `80` für das Zertifikat) |
+| `8181/tcp` | Verwaltung ohne Domain, nur im eigenen Netz |
 | `22/tcp` | SSH, nur wenn du von außen auf den Server willst |
 | `8282/udp` | OBS von außen, nur wenn OBS nicht im selben Netz läuft |
 
