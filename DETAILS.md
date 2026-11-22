@@ -5,7 +5,7 @@
 | Option | Wirkung |
 |---|---|
 | `--caddy DOMAIN` | HTTPS für die Verwaltung (Caddy mit automatischem Zertifikat). Die Domain muss auf den Server zeigen, Ports 80 und 443 müssen offen sein. |
-| (ohne `--caddy`) | Verwaltung direkt über IP und Port: `http://IP:8181/schluessel`. Unverschlüsselt, nur für das eigene Netz. |
+| (ohne `--caddy`) | Das Skript fragt, wo der Server steht. **1** (Enter): Verwaltung direkt über IP und Port, `http://IP:8181/schluessel`, unverschlüsselt, nur für das eigene Netz. **2**: Rechenzentrum, eigene Domain oder automatische Adresse aus der IP (`…sslip.io`), HTTPS mit Let's Encrypt. |
 | `--https-ip` | Stattdessen HTTPS über die IP mit selbst signiertem Zertifikat (Caddy, Port 443). Der Browser warnt einmal. |
 | `--ohne-https` | Verwaltung nur lokal auf dem Server, Zugriff per SSH-Tunnel (`ssh -L 8181:127.0.0.1:8181 benutzer@server`, dann `http://localhost:8181/schluessel`). |
 | `--ausfuehrlich` | Alle Meldungen zeigen. Sonst erscheint nur ein Fortschrittsbalken und am Ende eine Zusammenfassung (Protokoll in `/tmp/irl4you-install-*.log`). |
@@ -47,6 +47,6 @@ Ein Neustart ist nur nötig, wenn die Datei `/var/run/reboot-required` existiert
 
 ## Hinweise
 
-- In der Grundeinstellung (`compose.yaml`) sind `8181` und `8282` auf `127.0.0.1` beschränkt; `install.sh` öffnet `8181` ohne `--caddy` für das eigene Netz (Datei `compose.override.yaml`). OBS von außen: in der `compose.yaml` bei `8282` das `127.0.0.1:` entfernen und die Firewall öffnen.
+- In der Grundeinstellung (`compose.yaml`) ist `8181` (Verwaltung) auf `127.0.0.1` beschränkt; `install.sh` öffnet `8181` ohne `--caddy` für das eigene Netz (Datei `compose.override.yaml`). `8282/udp` (OBS) ist offen, der Zugriff ist durch den OBS-Schlüssel geschützt. Läuft OBS immer auf dem Server selbst, kann man in der `compose.yaml` bei `8282` ein `127.0.0.1:` davorsetzen.
 - Die Log-Grenzen (`max-size`, `max-file`) in der `compose.yaml` nicht entfernen.
 - Quelltext der geänderten Open-Source-Teile: Ordner `quellen/` und `NOTICE.md`.
