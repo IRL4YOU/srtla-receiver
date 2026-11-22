@@ -1,0 +1,17 @@
+diff --git a/srtcore/core.cpp b/srtcore/core.cpp
+index 6829fa6..6d31d55 100644
+--- a/srtcore/core.cpp
++++ b/srtcore/core.cpp
+@@ -9565,7 +9565,11 @@ bool srt::CUDT::processCtrl(const CPacket &ctrlpkt)
+     // - must be aligned to int32_t
+     // - cannot be 0 (msgs with no args use 4-byte zero-filled padding).
+     size_t pktlen = ctrlpkt.getLength();
+-    if (!pktlen || pktlen % sizeof(int32_t) != 0)
++    // IRL4YOU: Sender ohne 4-Byte-Auffuellung (z.B. eigene Apps) schicken ACKACK, Keepalive und Shutdown mit leerem
++    // Inhalt. Diese Pakete brauchen keinen Inhalt (ACKACK nutzt nur den Kopf), ohne sie fehlt die RTT-Messung.
++    const bool empty_ok = !pktlen && (ctrlpkt.getType() == UMSG_ACKACK || ctrlpkt.getType() == UMSG_KEEPALIVE
++                                      || ctrlpkt.getType() == UMSG_SHUTDOWN);
++    if (!empty_ok && (!pktlen || pktlen % sizeof(int32_t) != 0))
+     {
+         LOGC(inlog.Error, log << CONID() << "EPE: incoming UMSG: " << ctrlpkt.getType() << " INVALID SIZE: " << pktlen
+                 << " (expected > 0 and aligned to " << sizeof(int32_t) << " bytes)");

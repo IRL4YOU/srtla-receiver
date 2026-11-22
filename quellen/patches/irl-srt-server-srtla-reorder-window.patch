@@ -1,0 +1,14 @@
+diff --git a/src/core/SLSSrt.cpp b/src/core/SLSSrt.cpp
+index 7030a83..0564820 100644
+--- a/src/core/SLSSrt.cpp
++++ b/src/core/SLSSrt.cpp
+@@ -241,7 +241,8 @@ int CSLSSrt::libsrt_setup(int port, bool srtla_patches)
+ */
+     int ipv6Only = 0;
+     int srtlaPatchesValue = srtla_patches ? 1 : 0;
+-    int lossmaxttlvalue = 200;
++    // Reorder tolerance for bonded SRTLA ingest; direct SRT/player listeners keep the upstream value.
++    int lossmaxttlvalue = srtla_patches ? 47 : 200;
+     // SRTO_RCVBUF is bytes; SRTO_FC is the in-flight window in PACKETS. The old
+     // hardcoded 100 MB / 128000-packet sizing let any (even pre-auth) connection
+     // reserve ~100 MB of receive buffer, a flood amplifier. Size both from the

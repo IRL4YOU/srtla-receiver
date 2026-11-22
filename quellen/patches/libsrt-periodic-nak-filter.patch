@@ -1,0 +1,55 @@
+diff --git a/srtcore/core.cpp b/srtcore/core.cpp
+index 6d31d55..0810efd 100644
+--- a/srtcore/core.cpp
++++ b/srtcore/core.cpp
+@@ -9554,6 +9554,9 @@ bool srt::CUDT::processCtrlUserDefined(const CPacket& ctrlpkt)
+     return true;
+ }
+ 
++// IRL4YOU: hoechste Wartezeit fuer umsortierte Pakete, bevor ein Verlust gemeldet wird (unabhaengig von der Senderate)
++static const int FRESH_LOSS_MAX_MS = 60;
++
+ bool srt::CUDT::processCtrl(const CPacket &ctrlpkt)
+ {
+     // Just heard from the peer, reset the expiration count.
+@@ -11345,7 +11348,10 @@ int srt::CUDT::processData(CUnit* in_unit)
+             // There can be more than one record with the same TTL, if it has happened before
+             // that there was an 'unlost' (@c dropFromLossLists) sequence that has split one detected loss
+             // into two records.
+-            for (; i != m_FreshLoss.end() && i->ttl <= 0; ++i)
++            // IRL4YOU: Die Wartezeit zaehlt nicht nur Pakete, sondern ist auch nach FRESH_LOSS_MAX_MS abgelaufen. Bei sehr
++            // niedriger Senderate (Regler auf Mindestrate) wuerde sonst ein Verlust sekundenlang nicht gemeldet.
++            const steady_clock::time_point fresh_now = steady_clock::now();
++            for (; i != m_FreshLoss.end() && (i->ttl <= 0 || (fresh_now - i->timestamp) > milliseconds_from(FRESH_LOSS_MAX_MS)); ++i)
+             {
+                 HLOGC(qrlog.Debug, log << "Packet seq " << i->seq[0] << "-" << i->seq[1]
+                         << " (" << (CSeqNo::seqoff(i->seq[0], i->seq[1]) + 1) << " packets) considered lost - sending LOSSREPORT");
+@@ -12119,8 +12125,14 @@ void srt::CUDT::buildFilteredLossReport(vector<int32_t>& w_lossdata)
+ 
+     vector<pair<int32_t, int32_t> > fresh;
+     fresh.reserve(m_FreshLoss.size());
++    const steady_clock::time_point fresh_now = steady_clock::now();
+     for (size_t k = 0; k < m_FreshLoss.size(); ++k)
++    {
++        // IRL4YOU: abgelaufene Eintraege (Pakete oder Zeit) werden wieder gemeldet
++        if (m_FreshLoss[k].ttl <= 0 || (fresh_now - m_FreshLoss[k].timestamp) > milliseconds_from(FRESH_LOSS_MAX_MS))
++            continue;
+         fresh.push_back(make_pair(m_FreshLoss[k].seq[0], m_FreshLoss[k].seq[1]));
++    }
+     sort(fresh.begin(), fresh.end(), freshLossRangeLess);
+ 
+     for (int n = 0; n < arrlen; )
+diff --git a/srtcore/socketconfig.h b/srtcore/socketconfig.h
+index 5e0ee89..108ac2b 100644
+--- a/srtcore/socketconfig.h
++++ b/srtcore/socketconfig.h
+@@ -81,7 +81,8 @@ static const int SRT_OHEAD_DEFAULT_P100 = 25;
+ // libsrt1.5-ceralive 1.5.7+ceralive.2; see docs/CERALIVE-PATCHES.md section 2.
+ // Declared as `static const int` (not `constexpr`) because this header is compiled by the
+ // C++03 lane (.github/workflows/ubuntu-c++03.yml builds with -Werror=c++11-compat).
+-static const int SRTLA_PATCHES_DEFAULT_NAKGATE = 2;
++// IRL4YOU: 1 = regelmaessige Verlustmeldung bleibt an, meldet aber nur Luecken, deren Wartezeit abgelaufen ist (2 = nie wiederholen)
++static const int SRTLA_PATCHES_DEFAULT_NAKGATE = 1;
+ 
+ // NOTE: SRT_VERSION is primarily defined in the build file.
+ extern const int32_t SRT_DEF_VERSION;

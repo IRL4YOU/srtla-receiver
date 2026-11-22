@@ -1,0 +1,78 @@
+diff --git a/src/protocol/srtla_handler.cpp b/src/protocol/srtla_handler.cpp
+index 72d886f..ed9cfb2 100644
+--- a/src/protocol/srtla_handler.cpp
++++ b/src/protocol/srtla_handler.cpp
+@@ -4,7 +4,9 @@
+ #include "srtla_handler.h"
+ #include "pad_sendto.h"
+ 
++#include <algorithm>
+ #include <arpa/inet.h>
++#include <ctime>
+ #include <cmath>
+ #include <cstring>
+ #include <sys/socket.h>
+@@ -361,6 +363,26 @@ void SRTLAHandler::register_packet(ConnectionGroupPtr group,
+     conn->recv_log()[static_cast<std::size_t>(next_idx - 1)] = htobe32(sn);
+ 
+     if (conn->recv_index() == static_cast<int>(RECV_ACK_INT)) {
++        if (ack_weighting_enabled() && group) {
++            uint8_t best = 0;
++            int active = 0;
++            const time_t now = std::time(nullptr);
++            for (const auto &c : group->connections()) {
++                if (c->last_received() + CONN_TIMEOUT >= now) {
++                    best = std::max(best, c->stats().weight_percent);
++                    active++;
++                }
++            }
++            if (active > 1 && best > 0) {
++                auto &st = conn->stats();
++                st.ack_credit += (static_cast<uint32_t>(st.weight_percent) * 100) / best;
++                if (st.ack_credit < 100) {
++                    conn->set_recv_index(0);   // dieses Paketbuendel diesmal nicht bestaetigen
++                    return;
++                }
++                st.ack_credit -= 100;
++            }
++        }
+         srtla_ack_pkt ack {};
+         ack.type = htobe32(SRTLA_TYPE_ACK << 16);
+         std::memcpy(&ack.acks, conn->recv_log().data(), sizeof(uint32_t) * conn->recv_log().size());
+diff --git a/src/receiver_config.h b/src/receiver_config.h
+index 8effb1b..20f8f41 100644
+--- a/src/receiver_config.h
++++ b/src/receiver_config.h
+@@ -1,5 +1,6 @@
+ #pragma once
+ 
++#include <cstdlib>
+ #include <cstdint>
+ #include <ctime>
+ 
+@@ -74,6 +75,17 @@ inline constexpr double WINDOW_UTILIZATION_LOW = 0.30;
+ inline constexpr double BITRATE_DISCREPANCY_THRESHOLD = 0.20; // 20%
+ 
+ inline constexpr std::size_t RECV_ACK_INT = 10;
++
++// Optional: SRTLA-ACKs eines schwaecheren Pfads nur im Verhaeltnis seines Gewichts zum besten Pfad senden. Der klassische
++// BELABOX-Sender waechst sein Fenster je Pfad nur mit ACKs und verteilt nach Fenster/(unbestaetigt+1): ein gedrosselter
++// Pfad bekommt dadurch weniger Pakete, ohne dass der Sender etwas davon wissen muss. Standard: aus (SRTLA_ACK_WEIGHTING=1).
++inline bool ack_weighting_enabled() {
++  static const bool enabled = [] {
++    const char *v = std::getenv("SRTLA_ACK_WEIGHTING");
++    return v && v[0] == '1';
++  }();
++  return enabled;
++}
+ inline constexpr const char *SRT_SOCKET_INFO_PREFIX = "/tmp/srtla-group-";
+ 
+ struct srtla_ack_pkt {
+@@ -93,6 +105,7 @@ struct ConnectionStats {
+   uint32_t error_points = 0;
+   uint8_t weight_percent = WEIGHT_FULL;
+   uint16_t nack_count = 0;
++  uint32_t ack_credit = 100;   // Guthaben fuer die gewichtete SRTLA-ACK-Vergabe (100 = ein ACK faellig)
+ 
+   // Sender-side telemetry from keepalive packets (when available)
+   // These are populated when the sender includes connection_info_t in keepalives.

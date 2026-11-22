@@ -1,0 +1,31 @@
+# IRL4YOU SRTLA Receiver – Nutzungslizenz / Licence
+
+Copyright (c) 2026 IRL4YOU. Alle Rechte vorbehalten.
+
+## Deutsch
+
+Diese Lizenz gilt für die eigenen Teile des IRL4YOU SRTLA Receivers: Installations- und Update-Skripte, Compose-Datei, Konfiguration, Texte und die Verwaltungsoberfläche im Image. Sie gilt **nicht** für die Open-Source-Komponenten (siehe unten).
+
+1. **Benutzen ist erlaubt.** Du darfst den Receiver kostenlos installieren und betreiben, privat und gewerblich, für dich selbst oder für deine eigene Streaming-Gruppe.
+2. **Weitergeben und Verdienen ist nicht erlaubt.** Ohne vorherige schriftliche Erlaubnis darfst du die eigenen Teile nicht verkaufen, vermieten, als bezahlten oder werbefinanzierten Dienst anbieten, in anderen Paketen, Images, Stores oder auf Webseiten erneut bereitstellen oder in eigene Produkte übernehmen. Das Weitergeben des Links auf dieses Repository ist erlaubt.
+3. **Nennung.** Der Name IRL4YOU, die Urheberhinweise und diese Lizenz müssen erhalten bleiben. Wer etwas darüber hinaus nutzen will, meldet sich vorher bei uns (Discord, Link im Repository).
+4. **Eigene Anpassungen.** Für den eigenen Betrieb darfst du die Skripte und die Konfiguration anpassen. Die Verwaltungsoberfläche darfst du nicht verändern oder zurückentwickeln.
+5. **Gesetzliche Rechte bleiben.** Handlungen, die dir das Gesetz zwingend erlaubt, bleiben unberührt.
+6. **Keine Gewähr.** Die Software wird ohne Gewähr bereitgestellt. Die Haftung ist, soweit gesetzlich zulässig, auf Vorsatz und grobe Fahrlässigkeit beschränkt.
+7. **Verstoß.** Bei einem Verstoß endet deine Berechtigung zur Nutzung.
+
+**Open-Source-Bestandteile.** Für diese gelten ausschließlich ihre eigenen Lizenzen, nicht diese Nutzungslizenz: SRTLA-Empfänger (`srtla_rec`) AGPL-3.0, SRT-Bibliothek (libsrt) MPL-2.0, SRT-Server und spdlog MIT. Das gilt auch für unsere Änderungen daran im Ordner `quellen/` (siehe [quellen/LICENSE.md](quellen/LICENSE.md)). Diese Lizenzen erlauben auch gewerbliche Nutzung; das kann und will diese Lizenz nicht einschränken. Einzelheiten und Quellen: [NOTICE.md](NOTICE.md).
+
+## English
+
+This licence covers the own parts of the IRL4YOU SRTLA Receiver: install and update scripts, compose file, configuration, texts and the admin interface inside the image. It does **not** cover the open-source components (see below).
+
+1. **Use is allowed.** You may install and run the receiver free of charge, privately and commercially, for yourself or for your own streaming group.
+2. **No redistribution or profit.** Without prior written permission you may not sell, rent, offer as a paid or ad-funded service, republish in other packages, images, stores or websites, or include the own parts in your own products. Sharing the link to this repository is allowed.
+3. **Attribution.** The name IRL4YOU, the copyright notices and this licence must be kept. Anyone who wants more must contact us first (Discord, link in the repository).
+4. **Own adjustments.** For your own operation you may adapt the scripts and configuration. You may not modify or reverse-engineer the admin interface.
+5. **Statutory rights remain.**
+6. **No warranty.** Provided without warranty. Liability is limited to intent and gross negligence as far as the law allows.
+7. **Breach.** Your right to use ends upon breach.
+
+**Open-source components.** Only their own licences apply, not this one: SRTLA receiver (`srtla_rec`) AGPL-3.0, SRT library (libsrt) MPL-2.0, SRT server and spdlog MIT. This includes our changes to them in the folder `quellen/` (see [quellen/LICENSE.md](quellen/LICENSE.md)). Those licences allow commercial use; this licence cannot and does not restrict that. Details and sources: [NOTICE.md](NOTICE.md).

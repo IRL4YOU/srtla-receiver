@@ -1,0 +1,16 @@
+diff --git a/src/receiver_config.h b/src/receiver_config.h
+index 20f8f41..71fad57 100644
+--- a/src/receiver_config.h
++++ b/src/receiver_config.h
+@@ -36,9 +36,9 @@ inline constexpr int RECOVERY_CHANCE_PERIOD = 5;
+ // handshake we count it against the source IP and refuse new registrations once
+ // it crosses the threshold within the window. Tuned leniently so a mistyped
+ // passphrase or several broadcasters behind one NAT are not locked out.
+-inline constexpr int AUTH_FAIL_THRESHOLD = 5;  // failures within window to trip
++inline constexpr int AUTH_FAIL_THRESHOLD = 600;  // failures within window to trip
+ inline constexpr int AUTH_FAIL_WINDOW = 60;    // seconds
+-inline constexpr int AUTH_FAIL_COOLDOWN = 60;  // seconds blocked once tripped
++inline constexpr int AUTH_FAIL_COOLDOWN = 10;  // seconds blocked once tripped
+ 
+ inline constexpr int CONN_QUALITY_EVAL_PERIOD = 5;
+ inline constexpr double MIN_ACCEPTABLE_TOTAL_BANDWIDTH_KBPS = 1000.0;

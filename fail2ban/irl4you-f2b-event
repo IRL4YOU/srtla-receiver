@@ -1,0 +1,10 @@
+#!/bin/sh
+# Wird von fail2ban bei jeder Sperre aufgerufen (Argument: Name der Sperrstufe). Schreibt eine Zeile OHNE IP-Adresse
+# in die Ereignisdatei im Datenvolumen der Verwaltung (Pfad steht in /etc/irl4you/f2b-logfile).
+case "$1" in sshd|irl4you-web|irl4you-web-docker|irl4you-recidive) ;; *) exit 0 ;; esac
+F=$(cat /etc/irl4you/f2b-logfile 2>/dev/null)
+[ -n "$F" ] || exit 0
+printf '{"t":%s,"k":"f2b_ban","w":"%s"}\n' "$(date +%s)" "$1" >> "$F"
+chmod 644 "$F" 2>/dev/null
+if [ "$(wc -c < "$F")" -gt 30000 ]; then tail -n 150 "$F" > "$F.tmp" && mv "$F.tmp" "$F" && chmod 644 "$F"; fi
+exit 0

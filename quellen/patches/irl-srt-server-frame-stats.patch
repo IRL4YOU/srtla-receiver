@@ -1,0 +1,663 @@
+diff --git a/src/core/CMakeLists.txt b/src/core/CMakeLists.txt
+index 6ea6038..4e719f5 100644
+--- a/src/core/CMakeLists.txt
++++ b/src/core/CMakeLists.txt
+@@ -19,9 +19,11 @@ set(sls_core_files
+ 	SLSClient.hpp
+ 	SLSEpollThread.cpp
+ 	SLSEpollThread.hpp
+-	SLSGroup.cpp
+-	SLSGroup.hpp
+-	SLSHandle.hpp
++	SLSGroup.cpp
++	SLSGroup.hpp
++	SLSFrameStats.cpp
++	SLSFrameStats.hpp
++	SLSHandle.hpp
+ 	SLSListenerCore.cpp
+ 	SLSListenerAuth.cpp
+ 	SLSListenerConfig.cpp
+diff --git a/src/core/SLSManager.cpp b/src/core/SLSManager.cpp
+index 1571ea8..046b908 100644
+--- a/src/core/SLSManager.cpp
++++ b/src/core/SLSManager.cpp
+@@ -503,7 +503,19 @@ json CSLSManager::create_json_stats_for_publisher(CSLSRole *role, int clear)
+     // TS continuity breaks detected at ingest: content TLPKTDROP discarded
+     // before it reached the server, so every viewer shares the glitch.
+     // Complements pktRcvDrop (packets) with a content-level event count.
+-    ret["ingestDiscontinuities"] = role->get_ingest_discontinuities(clear);
++    ret["ingestDiscontinuities"] = role->get_ingest_discontinuities(clear);
++    // Estimated missing video access units, derived from DTS/PTS cadence. This
++    // is deliberately separate from SRT packet loss: one missing network
++    // packet is not one lost frame. `frameDropsEstimated` makes the semantics
++    // explicit; `frameDrops` keeps existing IRL4YOU overlays compatible.
++    ts_frame_stats_snapshot frame_stats;
++    if (role->get_frame_stats(frame_stats, clear))
++    {
++        ret["frameDrops"] = frame_stats.estimated_drops;
++        ret["frameDropsEstimated"] = frame_stats.estimated_drops;
++        ret["videoFramesObserved"] = frame_stats.observed_frames;
++        ret["videoFrameIntervalMs"] = frame_stats.nominal_interval / 90.0;
++    }
+     // Furthest any viewer of this stream fell behind the publisher ring write
+     // head (bytes) since the last clear. This is the catch-up burst a viewer
+     // will drain when it recovers, which the viewer perceives as a time-skip /
+diff --git a/src/core/SLSMapData.cpp b/src/core/SLSMapData.cpp
+index 01070f9..6849b1a 100644
+--- a/src/core/SLSMapData.cpp
++++ b/src/core/SLSMapData.cpp
+@@ -156,6 +156,12 @@ int CSLSMapData::add(char *key, int max_bitrate_kbps, int latency_ms)
+         sls_init_ts_cc_state(cc);
+         m_map_cc_state[strKey] = cc;
+     }
++    if (m_map_frame_state.find(strKey) == m_map_frame_state.end())
++    {
++        ts_frame_stats_state *frames = new ts_frame_stats_state;
++        sls_init_ts_frame_stats(frames);
++        m_map_frame_state[strKey] = frames;
++    }
+ 
+     spdlog::info("[{}] CSLSMapData::add ok, key='{}', ring_size={:d}, streams={:d}, total_ring_bytes={:d}.",
+                  fmt::ptr(this), key, data_array->get_data_size(), m_stream_count.load(std::memory_order_relaxed),
+@@ -248,6 +254,23 @@ int64_t CSLSMapData::get_ingest_discontinuities(const char *key, bool clear)
+     return it->second->get_ingest_discontinuities(clear);
+ }
+ 
++bool CSLSMapData::get_frame_stats(const char *key, ts_frame_stats_snapshot &stats, bool clear)
++{
++    stats = ts_frame_stats_snapshot();
++    if (!key)
++        return false;
++    // Exclusive against put(), whose frame parser is a single writer under a
++    // read lock. Stats polling is brief and normally once per second.
++    CSLSLock lock(&m_rwclock, true);
++    auto item = m_map_frame_state.find(std::string_view{key});
++    if (item == m_map_frame_state.end() || item->second == NULL)
++        return false;
++    stats = sls_get_ts_frame_stats(item->second);
++    if (clear)
++        item->second->estimated_drops = 0;
++    return true;
++}
++
+ int CSLSMapData::remove(char *key)
+ {
+     int ret = SLS_ERROR;
+@@ -269,6 +292,13 @@ int CSLSMapData::remove(char *key)
+         m_map_tc_state.erase(item_tc);
+     }
+ 
++    auto item_frames = m_map_frame_state.find(strKey);
++    if (item_frames != m_map_frame_state.end())
++    {
++        delete item_frames->second;
++        m_map_frame_state.erase(item_frames);
++    }
++
+     auto item = m_map_array.find(strKey);
+     if (item != m_map_array.end())
+     {
+@@ -358,6 +388,10 @@ int CSLSMapData::put(char *key, char *data, int len, int64_t *last_read_time)
+             array_data->note_ingest_discontinuity();
+     }
+ 
++    auto item_frames = m_map_frame_state.find(keyView);
++    if (item_frames != m_map_frame_state.end() && item_frames->second != NULL)
++        sls_ts_scan_frame_stats((const uint8_t *)data, len, item_frames->second);
++
+     // In-band SMPTE timecode, for streams that opted in. Absent entry == not
+     // scanning, which is the default and costs one map lookup.
+     auto item_tc = m_map_tc_state.find(keyView);
+@@ -428,6 +462,12 @@ void CSLSMapData::clear()
+         item_cc++;
+     }
+     m_map_cc_state.clear();
++    for (auto item_frames = m_map_frame_state.begin(); item_frames != m_map_frame_state.end();)
++    {
++        delete item_frames->second;
++        item_frames++;
++    }
++    m_map_frame_state.clear();
+     for (auto item_tc = m_map_tc_state.begin(); item_tc != m_map_tc_state.end();)
+     {
+         delete item_tc->second;
+diff --git a/src/core/SLSMapData.hpp b/src/core/SLSMapData.hpp
+index 53e7d59..9e86095 100644
+--- a/src/core/SLSMapData.hpp
++++ b/src/core/SLSMapData.hpp
+@@ -30,6 +30,7 @@
+ #include <string>
+ 
+ #include "SLSRecycleArray.hpp"
++#include "SLSFrameStats.hpp"
+ #include "SLSLock.hpp"
+ #include "SLSTimecode.hpp"
+ #include "common.hpp"
+@@ -95,6 +96,7 @@ public:
+     void report_viewer_snd_drops(const char *key, int64_t count);
+     int64_t get_viewer_snd_drops(const char *key, bool clear = false);
+     int64_t get_ingest_discontinuities(const char *key, bool clear = false);
++    bool get_frame_stats(const char *key, ts_frame_stats_snapshot &stats, bool clear = false);
+ 
+     // Opt `key` in to (or out of) in-band timecode scanning. Off by default:
+     // the scanner is only worth its per-frame work on streams whose encoder
+@@ -120,6 +122,10 @@ private:
+     // Pre-allocated in add(), freed in remove() and clear(); mutated only by
+     // the stream's single publisher writer.
+     std::map<std::string, ts_cc_state *, std::less<>> m_map_cc_state;
++    // Lightweight video cadence monitor. Unlike the optional SEI scanner it
++    // stores no frame payload and is always on, so /stats can expose an
++    // estimated missing-frame count without a decoder or sidecar process.
++    std::map<std::string, ts_frame_stats_state *, std::less<>> m_map_frame_state;
+     // Per-stream timecode scanner state, present only for streams that opted
+     // in via set_timecode_scan (it carries an 8 KB access-unit buffer, so it
+     // is not allocated for streams that will never use it). Written by the
+diff --git a/src/core/SLSRole.cpp b/src/core/SLSRole.cpp
+index 2581d7b..42673e5 100644
+--- a/src/core/SLSRole.cpp
++++ b/src/core/SLSRole.cpp
+@@ -1067,6 +1067,14 @@ int64_t CSLSRole::get_ingest_discontinuities(bool clear) const
+     return m_map_data->get_ingest_discontinuities(m_map_data_key, clear);
+ }
+ 
++bool CSLSRole::get_frame_stats(ts_frame_stats_snapshot &stats, bool clear) const
++{
++    stats = ts_frame_stats_snapshot();
++    if (m_map_data == NULL || strlen(m_map_data_key) == 0)
++        return false;
++    return m_map_data->get_frame_stats(m_map_data_key, stats, clear);
++}
++
+ void CSLSRole::sample_viewer_snd_drops()
+ {
+     if (m_map_data == NULL || strlen(m_map_data_key) == 0 || NULL == m_srt)
+diff --git a/src/core/SLSRole.hpp b/src/core/SLSRole.hpp
+index 039d54d..2233e42 100644
+--- a/src/core/SLSRole.hpp
++++ b/src/core/SLSRole.hpp
+@@ -242,6 +242,7 @@ public:
+     // Ingest TS continuity breaks for this stream (content lost before it
+     // reached the server; every viewer shares the glitch). Measurement only.
+     int64_t get_ingest_discontinuities(bool clear = false) const;
++    bool get_frame_stats(ts_frame_stats_snapshot &stats, bool clear = false) const;
+ 
+     // In-band SMPTE timecode read out of this stream's video SEI. Returns
+     // false (and a default-constructed snapshot, enabled=false) unless the
+diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
+index 98d84e4..5e1cfa4 100644
+--- a/tests/CMakeLists.txt
++++ b/tests/CMakeLists.txt
+@@ -12,6 +12,7 @@ add_executable(sls_tests
+     test_ip_acl.cpp
+     test_ts_parser.cpp
+     test_timecode.cpp
++    test_frame_stats.cpp
+     test_map_data.cpp
+     test_log_rate_limiter.cpp
+     test_player_registry.cpp
+diff --git a/src/core/SLSFrameStats.cpp b/src/core/SLSFrameStats.cpp
+new file mode 100644
+index 0000000..c8fa362
+--- /dev/null
++++ b/src/core/SLSFrameStats.cpp
+@@ -0,0 +1,271 @@
++/**
++ * The MIT License (MIT)
++ *
++ * Copyright (c) 2019-2020 Edward.Wu
++ */
++
++#include "SLSFrameStats.hpp"
++
++#include <algorithm>
++#include <cstring>
++
++#include "SLSTimecode.hpp"
++
++namespace
++{
++constexpr int TS_PACKET_LENGTH = 188;
++constexpr uint8_t TS_SYNC = 0x47;
++constexpr int INVALID_TS_PID = -1;
++constexpr int64_t INVALID_TIMESTAMP = -1;
++constexpr int PAT_PID = 0;
++constexpr uint8_t PSI_TABLE_ID_PAT = 0x00;
++constexpr uint8_t PSI_TABLE_ID_PMT = 0x02;
++constexpr int TS_STREAM_TYPE_H264 = 0x1B;
++constexpr int TS_STREAM_TYPE_HEVC = 0x24;
++constexpr int64_t PTS_WRAP = 1LL << 33;
++constexpr int MIN_INTERVAL_SAMPLES = 8;
++
++int64_t read_pts(const uint8_t *b)
++{
++    int64_t pts = ((int64_t)(b[0] & 0x0E)) << 29;
++    pts |= ((int64_t)b[1]) << 22;
++    pts |= ((int64_t)(b[2] & 0xFE)) << 14;
++    pts |= ((int64_t)b[3]) << 7;
++    pts |= ((int64_t)(b[4] & 0xFE)) >> 1;
++    return pts;
++}
++
++bool psi_section(const uint8_t *payload, int len, uint8_t table_id, const uint8_t *&section, int &section_len)
++{
++    if (len < 1)
++        return false;
++    int offset = 1 + payload[0];
++    if (offset + 8 > len)
++        return false;
++    const uint8_t *candidate = payload + offset;
++    int available = len - offset;
++    if (candidate[0] != table_id)
++        return false;
++    int encoded_len = ((candidate[1] & 0x0F) << 8) | candidate[2];
++    if (encoded_len < 9 || encoded_len + 3 > available)
++        return false;
++    section = candidate;
++    section_len = 3 + encoded_len - 4; // exclude CRC_32
++    return true;
++}
++
++void reset_timing(ts_frame_stats_state *st)
++{
++    st->last_timestamp = INVALID_TIMESTAMP;
++    st->interval_count = 0;
++    st->interval_index = 0;
++    st->nominal_interval = 0;
++}
++
++void parse_pat(const uint8_t *payload, int len, ts_frame_stats_state *st)
++{
++    const uint8_t *section = nullptr;
++    int section_len = 0;
++    if (!psi_section(payload, len, PSI_TABLE_ID_PAT, section, section_len))
++        return;
++
++    for (int pos = 8; pos + 4 <= section_len; pos += 4)
++    {
++        int program_number = (section[pos] << 8) | section[pos + 1];
++        if (program_number == 0)
++            continue;
++        int pmt_pid = ((section[pos + 2] & 0x1F) << 8) | section[pos + 3];
++        if (pmt_pid != st->pmt_pid)
++        {
++            st->pmt_pid = pmt_pid;
++            st->video_pid = INVALID_TS_PID;
++            st->codec = SLS_TC_CODEC_NONE;
++            reset_timing(st);
++        }
++        return;
++    }
++}
++
++void parse_pmt(const uint8_t *payload, int len, ts_frame_stats_state *st)
++{
++    const uint8_t *section = nullptr;
++    int section_len = 0;
++    if (!psi_section(payload, len, PSI_TABLE_ID_PMT, section, section_len) || section_len < 12)
++        return;
++
++    int program_info_len = ((section[10] & 0x0F) << 8) | section[11];
++    int pos = 12 + program_info_len;
++    while (pos + 5 <= section_len)
++    {
++        int stream_type = section[pos];
++        int elementary_pid = ((section[pos + 1] & 0x1F) << 8) | section[pos + 2];
++        int es_info_len = ((section[pos + 3] & 0x0F) << 8) | section[pos + 4];
++        int codec = stream_type == TS_STREAM_TYPE_H264   ? SLS_TC_CODEC_H264
++                    : stream_type == TS_STREAM_TYPE_HEVC ? SLS_TC_CODEC_HEVC
++                                                         : SLS_TC_CODEC_NONE;
++        if (codec != SLS_TC_CODEC_NONE)
++        {
++            if (elementary_pid != st->video_pid || codec != st->codec)
++            {
++                st->video_pid = elementary_pid;
++                st->codec = codec;
++                reset_timing(st);
++            }
++            return;
++        }
++        pos += 5 + es_info_len;
++    }
++}
++
++int64_t wrapped_delta(int64_t current, int64_t previous)
++{
++    int64_t delta = current - previous;
++    if (delta < -(PTS_WRAP / 2))
++        delta += PTS_WRAP;
++    else if (delta > PTS_WRAP / 2)
++        delta -= PTS_WRAP;
++    return delta;
++}
++
++int64_t median_interval(const ts_frame_stats_state *st)
++{
++    int64_t sorted[24];
++    std::memcpy(sorted, st->frame_intervals, (size_t)st->interval_count * sizeof(sorted[0]));
++    std::sort(sorted, sorted + st->interval_count);
++    int middle = st->interval_count / 2;
++    if ((st->interval_count & 1) != 0)
++        return sorted[middle];
++    return (sorted[middle - 1] + sorted[middle]) / 2;
++}
++
++void remember_clean_interval(ts_frame_stats_state *st, int64_t delta)
++{
++    st->frame_intervals[st->interval_index] = delta;
++    st->interval_index = (st->interval_index + 1) % 24;
++    if (st->interval_count < 24)
++        st->interval_count++;
++    if (st->interval_count >= MIN_INTERVAL_SAMPLES)
++        st->nominal_interval = median_interval(st);
++}
++
++void note_frame(ts_frame_stats_state *st, int64_t timestamp)
++{
++    st->observed_frames++;
++    if (timestamp == INVALID_TIMESTAMP)
++        return;
++
++    if (st->last_timestamp == INVALID_TIMESTAMP)
++    {
++        st->last_timestamp = timestamp;
++        return;
++    }
++
++    int64_t delta = wrapped_delta(timestamp, st->last_timestamp);
++    st->last_timestamp = timestamp;
++    // Accept plausible video intervals only. A backward timestamp or a stream
++    // restart re-arms sampling instead of creating a huge false drop count.
++    if (delta <= 0 || delta > 90LL * 90000)
++    {
++        reset_timing(st);
++        st->last_timestamp = timestamp;
++        return;
++    }
++
++    if (st->nominal_interval <= 0)
++    {
++        // 1..240 fps. Values outside this range are not useful frame cadence.
++        if (delta >= 375 && delta <= 90000)
++            remember_clean_interval(st, delta);
++        return;
++    }
++
++    int64_t frames_advanced = (delta + st->nominal_interval / 2) / st->nominal_interval;
++    if (frames_advanced > 1)
++        st->estimated_drops += (uint64_t)(frames_advanced - 1);
++
++    // Continuously adapt to an encoder frame-rate change, but never teach the
++    // estimator with a loss gap itself.
++    if (frames_advanced == 1 && delta * 4 >= st->nominal_interval * 3 &&
++        delta * 4 <= st->nominal_interval * 5)
++        remember_clean_interval(st, delta);
++}
++
++void parse_video_pes(const uint8_t *payload, int len, ts_frame_stats_state *st)
++{
++    int64_t timestamp = INVALID_TIMESTAMP;
++    if (len >= 9 && payload[0] == 0x00 && payload[1] == 0x00 && payload[2] == 0x01 &&
++        payload[3] >= 0xE0 && payload[3] <= 0xEF)
++    {
++        int flags = payload[7] & 0xC0;
++        int header_len = payload[8];
++        if (9 + header_len <= len)
++        {
++            if (flags == 0xC0 && header_len >= 10)
++                timestamp = read_pts(payload + 14); // DTS is monotonic with B-frames
++            else if (flags == 0x80 && header_len >= 5)
++                timestamp = read_pts(payload + 9);
++        }
++    }
++    note_frame(st, timestamp);
++}
++} // namespace
++
++void sls_init_ts_frame_stats(ts_frame_stats_state *st)
++{
++    if (st == nullptr)
++        return;
++    std::memset(st, 0, sizeof(*st));
++    st->pmt_pid = INVALID_TS_PID;
++    st->video_pid = INVALID_TS_PID;
++    st->codec = SLS_TC_CODEC_NONE;
++    st->last_timestamp = INVALID_TIMESTAMP;
++}
++
++void sls_ts_scan_frame_stats(const uint8_t *data, int len, ts_frame_stats_state *st)
++{
++    if (data == nullptr || st == nullptr)
++        return;
++
++    for (int offset = 0; offset + TS_PACKET_LENGTH <= len; offset += TS_PACKET_LENGTH)
++    {
++        const uint8_t *packet = data + offset;
++        if (packet[0] != TS_SYNC || (packet[1] & 0x80) != 0)
++            continue;
++        int pid = ((packet[1] & 0x1F) << 8) | packet[2];
++        int afc = (packet[3] >> 4) & 0x3;
++        if ((afc & 0x1) == 0)
++            continue;
++        int pos = 4;
++        if ((afc & 0x2) != 0)
++        {
++            pos += 1 + packet[4];
++            if (pos >= TS_PACKET_LENGTH)
++                continue;
++        }
++        const uint8_t *payload = packet + pos;
++        int payload_len = TS_PACKET_LENGTH - pos;
++        bool pusi = (packet[1] & 0x40) != 0;
++        if (!pusi)
++            continue;
++        if (pid == PAT_PID)
++            parse_pat(payload, payload_len, st);
++        else if (pid == st->pmt_pid)
++            parse_pmt(payload, payload_len, st);
++        else if (pid == st->video_pid && st->codec != SLS_TC_CODEC_NONE)
++            parse_video_pes(payload, payload_len, st);
++    }
++}
++
++ts_frame_stats_snapshot sls_get_ts_frame_stats(const ts_frame_stats_state *st)
++{
++    ts_frame_stats_snapshot snapshot;
++    if (st == nullptr)
++        return snapshot;
++    snapshot.valid = st->video_pid != INVALID_TS_PID && st->nominal_interval > 0;
++    snapshot.codec = st->codec;
++    snapshot.video_pid = st->video_pid;
++    snapshot.observed_frames = st->observed_frames;
++    snapshot.estimated_drops = st->estimated_drops;
++    snapshot.nominal_interval = st->nominal_interval;
++    return snapshot;
++}
+diff --git a/src/core/SLSFrameStats.hpp b/src/core/SLSFrameStats.hpp
+new file mode 100644
+index 0000000..7513968
+--- /dev/null
++++ b/src/core/SLSFrameStats.hpp
+@@ -0,0 +1,42 @@
++/**
++ * The MIT License (MIT)
++ *
++ * Copyright (c) 2019-2020 Edward.Wu
++ */
++
++#pragma once
++
++#include <cstdint>
++
++// Lightweight MPEG-TS video timing monitor. It does not decode video and never
++// changes relayed bytes. It learns the first H.264/HEVC PID from PAT/PMT, counts
++// access units and estimates missing access units from DTS/PTS gaps.
++struct ts_frame_stats_state
++{
++    int pmt_pid;
++    int video_pid;
++    int codec;
++
++    int64_t last_timestamp;
++    int64_t frame_intervals[24];
++    int interval_count;
++    int interval_index;
++    int64_t nominal_interval;
++
++    uint64_t observed_frames;
++    uint64_t estimated_drops;
++};
++
++struct ts_frame_stats_snapshot
++{
++    bool valid = false;
++    int codec = 0;
++    int video_pid = -1;
++    uint64_t observed_frames = 0;
++    uint64_t estimated_drops = 0;
++    int64_t nominal_interval = 0; // 90 kHz MPEG clock ticks
++};
++
++void sls_init_ts_frame_stats(ts_frame_stats_state *st);
++void sls_ts_scan_frame_stats(const uint8_t *data, int len, ts_frame_stats_state *st);
++ts_frame_stats_snapshot sls_get_ts_frame_stats(const ts_frame_stats_state *st);
+diff --git a/tests/test_frame_stats.cpp b/tests/test_frame_stats.cpp
+new file mode 100644
+index 0000000..c3ed2c7
+--- /dev/null
++++ b/tests/test_frame_stats.cpp
+@@ -0,0 +1,135 @@
++#include "doctest.h"
++
++#include <algorithm>
++#include <cstdint>
++#include <vector>
++
++#include "SLSFrameStats.hpp"
++
++namespace
++{
++constexpr int PMT_PID = 0x1000;
++constexpr int VIDEO_PID = 0x0100;
++constexpr int TS_PACKET_LENGTH = 188;
++constexpr int PAT_PID = 0;
++
++void finish_section(std::vector<uint8_t> &section)
++{
++    size_t body = section.size() - 3 + 4;
++    section[1] = (uint8_t)(0xB0 | ((body >> 8) & 0x0F));
++    section[2] = (uint8_t)(body & 0xFF);
++    section.insert(section.end(), {0xDE, 0xAD, 0xBE, 0xEF});
++}
++
++std::vector<uint8_t> psi_packet(int pid, std::vector<uint8_t> section)
++{
++    std::vector<uint8_t> packet = {0x47, (uint8_t)(0x40 | ((pid >> 8) & 0x1F)),
++                                   (uint8_t)(pid & 0xFF), 0x10, 0x00};
++    packet.insert(packet.end(), section.begin(), section.end());
++    packet.resize(TS_PACKET_LENGTH, 0xFF);
++    return packet;
++}
++
++std::vector<uint8_t> pat_packet()
++{
++    std::vector<uint8_t> section = {0x00, 0x00, 0x00, 0x00, 0x01, 0xC1, 0x00, 0x00,
++                                    0x00, 0x01, (uint8_t)(0xE0 | (PMT_PID >> 8)),
++                                    (uint8_t)(PMT_PID & 0xFF)};
++    finish_section(section);
++    return psi_packet(PAT_PID, section);
++}
++
++std::vector<uint8_t> pmt_packet()
++{
++    std::vector<uint8_t> section = {0x02, 0x00, 0x00, 0x00, 0x01, 0xC1, 0x00, 0x00,
++                                    0xE0, 0x00, 0xF0, 0x00,
++                                    0x24, (uint8_t)(0xE0 | (VIDEO_PID >> 8)),
++                                    (uint8_t)(VIDEO_PID & 0xFF), 0xF0, 0x00};
++    finish_section(section);
++    return psi_packet(PMT_PID, section);
++}
++
++void append_pts(std::vector<uint8_t> &out, int64_t pts, uint8_t prefix)
++{
++    out.push_back((uint8_t)(prefix | (((pts >> 30) & 0x07) << 1)));
++    out.push_back((uint8_t)((pts >> 22) & 0xFF));
++    out.push_back((uint8_t)(0x01 | (((pts >> 15) & 0x7F) << 1)));
++    out.push_back((uint8_t)((pts >> 7) & 0xFF));
++    out.push_back((uint8_t)(0x01 | ((pts & 0x7F) << 1)));
++}
++
++std::vector<uint8_t> video_packet(int64_t dts, uint8_t cc)
++{
++    std::vector<uint8_t> packet = {0x47, (uint8_t)(0x40 | (VIDEO_PID >> 8)),
++                                   (uint8_t)(VIDEO_PID & 0xFF), (uint8_t)(0x10 | (cc & 0x0F))};
++    std::vector<uint8_t> pes = {0x00, 0x00, 0x01, 0xE0, 0x00, 0x00, 0x80, 0xC0, 0x0A};
++    append_pts(pes, dts, 0x31); // PTS
++    append_pts(pes, dts, 0x11); // DTS
++    pes.push_back(0x00);
++    packet.insert(packet.end(), pes.begin(), pes.end());
++    packet.resize(TS_PACKET_LENGTH, 0xFF);
++    return packet;
++}
++
++void append(std::vector<uint8_t> &out, const std::vector<uint8_t> &part)
++{
++    out.insert(out.end(), part.begin(), part.end());
++}
++} // namespace
++
++TEST_CASE("frame stats: stable cadence reports no estimated drops")
++{
++    ts_frame_stats_state state;
++    sls_init_ts_frame_stats(&state);
++    std::vector<uint8_t> ts;
++    append(ts, pat_packet());
++    append(ts, pmt_packet());
++    for (int frame = 0; frame < 20; frame++)
++        append(ts, video_packet(90000 + frame * 3000, (uint8_t)frame));
++
++    sls_ts_scan_frame_stats(ts.data(), (int)ts.size(), &state);
++    ts_frame_stats_snapshot stats = sls_get_ts_frame_stats(&state);
++    CHECK(stats.valid);
++    CHECK(stats.observed_frames == 20);
++    CHECK(stats.nominal_interval == 3000);
++    CHECK(stats.estimated_drops == 0);
++}
++
++TEST_CASE("frame stats: a DTS gap is counted as missing video frames")
++{
++    ts_frame_stats_state state;
++    sls_init_ts_frame_stats(&state);
++    std::vector<uint8_t> ts;
++    append(ts, pat_packet());
++    append(ts, pmt_packet());
++    uint8_t cc = 0;
++    int64_t dts = 90000;
++    for (int frame = 0; frame < 12; frame++, dts += 3000)
++        append(ts, video_packet(dts, cc++));
++    dts += 6000; // skip two 3000-tick frame positions
++    append(ts, video_packet(dts, cc++));
++
++    sls_ts_scan_frame_stats(ts.data(), (int)ts.size(), &state);
++    ts_frame_stats_snapshot stats = sls_get_ts_frame_stats(&state);
++    CHECK(stats.valid);
++    CHECK(stats.nominal_interval == 3000);
++    CHECK(stats.estimated_drops == 2);
++}
++
++TEST_CASE("frame stats: MPEG clock wrap does not create a false drop")
++{
++    ts_frame_stats_state state;
++    sls_init_ts_frame_stats(&state);
++    std::vector<uint8_t> ts;
++    append(ts, pat_packet());
++    append(ts, pmt_packet());
++    const int64_t wrap = 1LL << 33;
++    int64_t start = wrap - 27000;
++    for (int frame = 0; frame < 20; frame++)
++        append(ts, video_packet((start + frame * 3000) % wrap, (uint8_t)frame));
++
++    sls_ts_scan_frame_stats(ts.data(), (int)ts.size(), &state);
++    ts_frame_stats_snapshot stats = sls_get_ts_frame_stats(&state);
++    CHECK(stats.valid);
++    CHECK(stats.estimated_drops == 0);
++}

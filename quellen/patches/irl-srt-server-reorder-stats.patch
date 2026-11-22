@@ -1,0 +1,18 @@
+diff --git a/src/core/SLSManager.cpp b/src/core/SLSManager.cpp
+--- a/src/core/SLSManager.cpp
++++ b/src/core/SLSManager.cpp
+@@ -461,6 +461,14 @@ json CSLSManager::create_json_stats_for_publisher(CSLSRole *role, int clear)
+     ret["pktRecvNAKTotal"] = stats.pktRecvNAKTotal;
+     ret["pktRetransTotal"] = stats.pktRetransTotal;
+     ret["pktRcvRetrans"] = stats.pktRcvRetrans;
++    // Exact denominators and reorder diagnostics for distinguishing real
++    // link loss from harmless cross-path reordering. These are additive JSON
++    // fields and keep the established NOALBS schema backward compatible.
++    ret["pktRecvUniqueTotal"] = stats.pktRecvUniqueTotal;
++    ret["pktReorderDistance"] = stats.pktReorderDistance;
++    ret["pktReorderTolerance"] = stats.pktReorderTolerance;
++    ret["pktRcvBelated"] = stats.pktRcvBelated;
++    ret["pktRcvAvgBelatedTime"] = stats.pktRcvAvgBelatedTime;
+ #ifdef SRT_HAVE_SRTLA_REORDER_HOLD
+     // How long a gap must persist before this socket calls it lost, measured
+     // from the spread between the bonded links feeding it. Reported alongside

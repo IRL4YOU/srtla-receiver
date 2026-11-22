@@ -1,0 +1,32 @@
+diff --git a/src/core/SLSListenerCore.cpp b/src/core/SLSListenerCore.cpp
+index 9f0e70b..4dc833b 100644
+--- a/src/core/SLSListenerCore.cpp
++++ b/src/core/SLSListenerCore.cpp
+@@ -287,13 +287,6 @@ int CSLSListener::start()
+     spdlog::info("[listener] Listener started | port={} type={} srtla_patches={}", m_port, listener_type,
+                  use_srtla_patches ? "on" : "off");
+ 
+-    ret = m_srt->libsrt_listen(m_back_log);
+-    if (SLS_OK != ret)
+-    {
+-        spdlog::error("[listener] Start failed, libsrt_listen error | port={}", m_port);
+-        return ret;
+-    }
+-
+     // Reject malformed streamids and recently-failed publisher keys during the
+     // handshake, before srt_accept and any webhook. Publisher listeners only
+     // (the DoS-relevant path); the negative cache is passed as the opaque and
+@@ -318,6 +311,13 @@ int CSLSListener::start()
+         }
+     }
+ 
++    ret = m_srt->libsrt_listen(m_back_log);
++    if (SLS_OK != ret)
++    {
++        spdlog::error("[listener] Start failed, libsrt_listen error | port={}", m_port);
++        return ret;
++    }
++
+     if (sls_should_log_category(SLSLogCategory::LISTENER, spdlog::level::debug))
+     {
+         spdlog::debug("[listener] Checking role list");

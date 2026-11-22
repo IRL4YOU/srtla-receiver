@@ -1,0 +1,52 @@
+diff --git a/src/common.h b/src/common.h
+--- a/src/common.h
++++ b/src/common.h
+@@ -30,5 +30,6 @@
+ #define SRT_TYPE_HANDSHAKE 0x8000
+ #define SRT_TYPE_ACK 0x8002
+ #define SRT_TYPE_NAK 0x8003
+ #define SRT_TYPE_SHUTDOWN 0x8005
++#define SRT_TYPE_DROPREQ 0x8007
+ 
+@@ -100,5 +101,6 @@ int parse_port(char *port_str);
+ int32_t get_srt_sn(void *pkt, int n);
+ uint16_t get_srt_type(void *pkt, int n);
+ int is_srt_ack(void *pkt, int n);
+ int is_srt_nak(void *pkt, int n);
++int is_srt_dropreq(void *pkt, int n);
+ int is_srt_shutdown(void *pkt, int n);
+diff --git a/src/common.c b/src/common.c
+--- a/src/common.c
++++ b/src/common.c
+@@ -112,9 +112,13 @@ int is_srt_ack(void *pkt, int n) {
+   return get_srt_type(pkt, n) == SRT_TYPE_ACK;
+ }
+ 
+ int is_srt_nak(void *pkt, int n) {
+   return get_srt_type(pkt, n) == SRT_TYPE_NAK;
+ }
+ 
++int is_srt_dropreq(void *pkt, int n) {
++  return get_srt_type(pkt, n) == SRT_TYPE_DROPREQ;
++}
++
+ int is_srtla_keepalive(void *pkt, int n) {
+   return get_srt_type(pkt, n) == SRTLA_TYPE_KEEPALIVE;
+ }
+diff --git a/src/protocol/srt_handler.cpp b/src/protocol/srt_handler.cpp
+--- a/src/protocol/srt_handler.cpp
++++ b/src/protocol/srt_handler.cpp
+@@ -73,9 +73,10 @@ void SRTHandler::handle_srt_data(connection::ConnectionGroupPtr group) {
+                      static_cast<void *>(group.get()));
+     }
+ 
+-    // Broadcast ACKs and NAKs to all connections to ensure they reach the
+-    // sender even if some connections are dead. Other packets go to last_address.
+-    if (is_srt_ack(buf, n) || is_srt_nak(buf, n)) {
++    // Broadcast ACKs, NAKs and too-late DROP requests to every bonded path.
++    // A lost DROPREQ otherwise leaves the sender retransmitting stale packets
++    // and delays the next complete H.265 keyframe after congestion.
++    if (is_srt_ack(buf, n) || is_srt_nak(buf, n) || is_srt_dropreq(buf, n)) {
+         const auto &connections = group->connections();
+         size_t num_conns = connections.size();
+ 

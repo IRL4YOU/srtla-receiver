@@ -1,0 +1,46 @@
+name: irl4you-receiver
+
+services:
+  receiver:
+    image: irl4you/srtla-receiver:1.0.0
+    pull_policy: missing        # Image von Docker Hub (oder aus einer mitgelieferten Datei, siehe install.sh/update.sh)
+    container_name: irl4you-srtla-receiver
+    restart: unless-stopped
+    init: true
+    ports:
+      - "8383:8383/udp"                         # Senden (SRTLA), von aussen erreichbar
+      - "8384:8384/udp"                         # Senden (reines SRT, gleiche Stream-ID), von aussen erreichbar
+      - "127.0.0.1:8282:8282/udp"               # OBS-Wiedergabe, nur lokal (fuer extern: Adresse vor dem Doppelpunkt aendern)
+      - "127.0.0.1:8181:8181/tcp"               # Verwaltung und Statistik, nur lokal (Zugriff per SSH-Tunnel)
+    secrets:
+      - irl4you_enc_key                         # Schluessel zur Verschluesselung der gespeicherten Schluessel, getrennt vom Datenvolumen
+    volumes:
+      - irl4you-data:/data                      # Benutzer, Streams, Schluessel (verschluesselt, Schluessel dazu liegt NICHT hier)
+      - ./config/sls.conf:/config/sls.conf:ro
+    environment:
+      TZ: "Europe/Berlin"
+      # IRL4YOU_UPDATE_CHECK: "0"              # abschalten: kein taeglicher Abruf der neuesten Version (Update-Hinweis)
+      # IRL4YOU_UPDATE_URL: "https://..."       # eigene Adresse fuer die Versionsabfrage
+      # IRL4YOU_IP_CHECK: "0"                   # abschalten: externe Adresse nicht automatisch ermitteln (sonst jede Minute ipify/ifconfig.me/icanhazip)
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/healthcheck.sh"]
+      interval: 15s
+      timeout: 3s
+      retries: 5
+      start_period: 15s
+    logging:                                    # Log-Grenze: ohne diese Zeilen waechst das Log unbegrenzt
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+secrets:
+  irl4you_enc_key:
+    file: ./secrets/enc.key                     # wird von install.sh angelegt (nur der Container-Benutzer darf lesen)
+
+volumes:
+  irl4you-data:
