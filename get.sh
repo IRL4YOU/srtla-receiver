@@ -19,7 +19,7 @@ stage() {
   if [ "$VERBOSE" -eq 1 ]; then printf '== %s\n' "$1" >&3; return; fi
   local w=30 f=$((STEP*30/TOTAL)) p=$((STEP*100/TOTAL)) fill rest
   fill=$(printf '%*s' "$f" '' | tr ' ' '#'); rest=$(printf '%*s' "$((w-f))" '' | tr ' ' '-')
-  printf '\r%s[%s%s]%s %3d%%  %-44s' "$C_C" "$fill" "$rest" "$C_0" "$p" "$1" >&3
+  printf '\r%s[%s%s]%s %3d%%  %-44s\033[K' "$C_C" "$fill" "$rest" "$C_0" "$p" "$1" >&3
 }
 bei_ende() {
   local rc=$?
