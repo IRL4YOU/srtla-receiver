@@ -12,7 +12,7 @@ Ein Befehl auf einem frischen Ubuntu- oder Debian-Server (aktualisiert das Syste
 wget -qO get.sh https://raw.githubusercontent.com/IRL4YOU/srtla-receiver/main/get.sh && bash get.sh --caddy meine.domain.de --ssh-haerten
 ```
 
-Ohne Domain: `bash get.sh` ohne Optionen.
+Ohne Domain: `bash get.sh` ohne Optionen (Verwaltung im eigenen Netz über `http://IP:8181/schluessel`). Am Ende zeigt eine Zusammenfassung Adresse, Einmalcode und Ports. Im Rechenzentrum immer mit `--caddy DOMAIN`.
 
 Die ganze Anleitung steht in [ANLEITUNG.md](ANLEITUNG.md), Optionen und Hintergründe in [DETAILS.md](DETAILS.md).
 
