@@ -6,7 +6,7 @@ Du brauchst einen Linux-Server (Ubuntu oder Debian) mit Docker und Docker Compos
 
 Aktualisiert das System, richtet Git und Docker ein, holt das Paket und installiert alles. Als normaler Benutzer mit `sudo` ausführen.
 
-Mit Domain (HTTPS) und SSH nur mit Schlüssel:
+Mit eigener Domain (HTTPS) und SSH nur mit Schlüssel:
 
 ```bash
 wget -qO get.sh https://raw.githubusercontent.com/IRL4YOU/srtla-receiver/main/get.sh && bash get.sh --caddy meine.domain.de --ssh-haerten
@@ -18,7 +18,7 @@ Ohne Domain (Verwaltung im eigenen Netz über IP und Port):
 wget -qO get.sh https://raw.githubusercontent.com/IRL4YOU/srtla-receiver/main/get.sh && bash get.sh
 ```
 
-Während der Installation läuft nur ein Fortschrittsbalken. Am Ende zeigt das Skript in einer Zusammenfassung die **Adresse der Verwaltung**, den **Einmalcode**, die Sendeadressen und die freizugebenden Ports. Das Paket liegt danach in `~/srtla-receiver` (dort später auch `bash update.sh`). Weiter mit Schritt 3. Wer es lieber von Hand macht, nimmt die Schritte 0 bis 2.
+Während der Installation läuft nur ein Fortschrittsbalken. Das Skript fragt einmal, **wo der Server steht**: **1** (oder Enter) für Zuhause/eigenes Netz, **2** für Rechenzentrum/Internet. Bei 2 gibst du deine Domain ein oder drückst Enter für eine automatische Adresse aus der IP (sslip.io); Caddy richtet dann HTTPS mit Let's Encrypt ein. Am Ende zeigt das Skript in einer Zusammenfassung die **Adresse der Verwaltung**, den **Einmalcode**, die Sendeadressen und die freizugebenden Ports. Das Paket liegt danach in `~/srtla-receiver` (dort später auch `bash update.sh`). Weiter mit Schritt 3. Wer es lieber von Hand macht, nimmt die Schritte 0 bis 2.
 
 ## 0. Frischer Server: Git und Docker installieren
 
@@ -67,14 +67,15 @@ Das Skript lädt das Image, startet den Empfänger, richtet `fail2ban` ein und z
 
 ## 4. Ports freigeben (Router und Firewall)
 
-| Port | Wofür |
-|---|---|
-| `8383/udp` | Senden per SRTLA (App, Handy, Box) |
-| `8384/udp` | Senden per reinem SRT |
-| `443/tcp`, `80/tcp` | Verwaltung, Statistik und NOALBS per HTTPS (nur mit Domain; `80` für das Zertifikat) |
-| `8181/tcp` | Verwaltung ohne Domain, nur im eigenen Netz |
-| `22/tcp` | SSH, nur wenn du von außen auf den Server willst |
-| `8282/udp` | OBS von außen, nur wenn OBS nicht im selben Netz läuft |
+| Port | Protokoll | Wofür | Wann |
+|---|---|---|---|
+| `22` | TCP | SSH | nur wenn du von außen auf den Server willst |
+| `80` | TCP | Zertifikat (Let's Encrypt) | nur mit Domain |
+| `443` | TCP | Verwaltung, Statistik und NOALBS per HTTPS | nur mit Domain |
+| `8181` | TCP | Verwaltung, Statistik und NOALBS direkt | nur im eigenen Netz, ohne Domain |
+| `8282` | UDP | OBS holt den Stream ab (geschützt durch den OBS-Schlüssel) | immer |
+| `8383` | UDP | Senden per SRTLA (App, Handy, Box) | immer |
+| `8384` | UDP | Senden per reinem SRT | immer |
 
 ## 5. Update
 
