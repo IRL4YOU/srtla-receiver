@@ -30,7 +30,10 @@ bei_ende() {
 }
 trap bei_ende EXIT
 
-if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo"; fi
+if [ "$(id -u)" -eq 0 ]; then
+  SUDO=""
+  printf '%sHinweis: Du bist als root angemeldet. Das funktioniert; das Paket liegt dann in %s. Ueblicher ist ein normaler Benutzer mit sudo.%s\n' "$C_C" "$ZIEL" "$C_0" >&3
+else SUDO="sudo"; fi
 command -v apt-get >/dev/null 2>&1 || { echo "Nur Ubuntu/Debian (apt) wird unterstuetzt." >&3; exit 1; }
 if [ -n "$SUDO" ] && ! command -v sudo >/dev/null 2>&1; then echo "sudo fehlt. Als root starten oder sudo installieren." >&3; exit 1; fi
 # Passwortabfrage fuer sudo gleich zu Beginn, solange die Ausgabe noch sichtbar ist
