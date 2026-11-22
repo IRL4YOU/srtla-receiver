@@ -8,7 +8,7 @@
 #   --ssh-haerten    SSH nur noch mit Schluessel (Passwort-Anmeldung aus). Nur wenn ein Schluessel hinterlegt ist.
 #   --ja             Rueckfragen automatisch mit Ja beantworten.
 #   --ausfuehrlich   alle Meldungen zeigen statt nur den Fortschrittsbalken (Protokoll liegt sonst in /tmp/irl4you-install-*.log)
-#   (ohne --caddy)  Verwaltung direkt ueber IP und Port: http://IP:8181/schluessel (fuer das eigene Netz, unverschluesselt)
+#   (ohne --caddy)  fragt, wo der Server steht: 1 = Zuhause: Verwaltung direkt ueber IP und Port: http://IP:8181/schluessel (fuer das eigene Netz, unverschluesselt)
 #   --https-ip       stattdessen HTTPS ueber die IP mit selbst signiertem Zertifikat (Port 443, Browser warnt einmal)
 #   --ohne-https     Verwaltung nur lokal auf dem Server (Zugriff per SSH-Tunnel)
 #   --nur-schutz     nur fail2ban/SSH/Caddy einrichten (der Empfaenger laeuft schon, z. B. bei bestehenden Servern)
@@ -60,6 +60,23 @@ bei_ende() {
 trap bei_ende EXIT
 
 if [ -n "$CADDY_DOMAIN" ]; then MODE=domain; elif [ "$HTTPS_IP" -eq 1 ]; then MODE=httpsip; elif [ "$OHNE_HTTPS" -eq 1 ]; then MODE=lokal; else MODE=lan; fi
+
+# Nachfrage: Wo steht der Server? (Zuhause: Verwaltung ueber IP und Port; Rechenzentrum/Internet: HTTPS)
+if [ "$MODE" = lan ] && [ "$JA" -eq 0 ] && [ "$NUR_SCHUTZ" -eq 0 ] && [ -t 0 ]; then
+  printf '\n%sWo steht der Server?%s\n   1) Zuhause / eigenes Netz       (Verwaltung ueber IP und Port, unverschluesselt)\n   2) Rechenzentrum / Internet     (Verwaltung per HTTPS)\n%sAuswahl (Enter = 1):%s ' "$C_Y" "$C_0" "$C_Y" "$C_0" >&3
+  read -r ANTW
+  if [ "$(printf '%s' "$ANTW" | tr -d ' \r')" = 2 ]; then
+    printf '\n%sFuer die verschluesselte Verwaltung (Let'"'"'s Encrypt) brauchst du eine Domain, die auf diesen Server zeigt; Ports 80 und 443 muessen offen sein.%s\n' "$C_C" "$C_0" >&3
+    while true; do
+      printf '%sDomain (z. B. meine.domain.de), oder "ohne" fuer ein selbst signiertes Zertifikat:%s ' "$C_Y" "$C_0" >&3
+      read -r DOM
+      DOM=$(printf '%s' "$DOM" | tr -d ' \r')
+      if [ "$DOM" = ohne ]; then MODE=httpsip; break
+      elif printf '%s' "$DOM" | grep -Eq '^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?\.[A-Za-z]{2,}$'; then CADDY_DOMAIN="$DOM"; MODE=domain; break
+      else printf '%sKeine gueltige Domain.%s\n' "$C_R" "$C_0" >&3; fi
+    done
+  fi
+fi
 
 if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo"; fi
 if docker info >/dev/null 2>&1; then D="docker"; else D="$SUDO docker"; fi
