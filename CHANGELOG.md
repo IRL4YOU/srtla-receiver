@@ -1,5 +1,11 @@
 # Änderungen
 
+## 1.0.1
+
+- Oberfläche zweisprachig: Deutsch und English, Umschalter DE | EN oben in der Leiste (gemerkt im Browser, Standard: Browsersprache).
+- Installation und Update fragen zu Beginn nach der Sprache (Deutsch oder English) und zeigen alle Meldungen in dieser Sprache. Auch per Option: `--de` oder `--en`.
+- Update-Befehl mit Aktualisieren der Skripte: `cd ~/srtla-receiver && git pull && bash update.sh`.
+
 ## 1.0.0
 
 Erste öffentliche Version.
