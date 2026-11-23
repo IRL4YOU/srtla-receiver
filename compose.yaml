@@ -2,7 +2,7 @@ name: irl4you-receiver
 
 services:
   receiver:
-    image: irl4you/srtla-receiver:1.0.0
+    image: irl4you/srtla-receiver:1.0.1
     pull_policy: missing        # Image von Docker Hub (oder aus einer mitgelieferten Datei, siehe install.sh/update.sh)
     container_name: irl4you-srtla-receiver
     restart: unless-stopped
