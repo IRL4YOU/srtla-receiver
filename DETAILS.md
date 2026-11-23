@@ -9,6 +9,7 @@
 | `--https-ip` | Stattdessen HTTPS über die IP mit selbst signiertem Zertifikat (Caddy, Port 443). Der Browser warnt einmal. |
 | `--ohne-https` | Verwaltung nur lokal auf dem Server, Zugriff per SSH-Tunnel (`ssh -L 8181:127.0.0.1:8181 benutzer@server`, dann `http://localhost:8181/schluessel`). |
 | `--ausfuehrlich` | Alle Meldungen zeigen. Sonst erscheint nur ein Fortschrittsbalken und am Ende eine Zusammenfassung (Protokoll in `/tmp/irl4you-install-*.log`). |
+| `--de` / `--en` | Sprache der Meldungen (Deutsch oder Englisch), bei `get.sh`, `install.sh` und `update.sh`. Ohne Angabe fragt das Skript am Anfang (Enter = Deutsch). |
 | `--ssh-haerten` | SSH nur noch mit Schlüssel (Passwort-Anmeldung aus). Nur wenn ein Schlüssel hinterlegt ist, nach Rückfrage. Danach in einem zweiten Fenster prüfen, ob die Anmeldung klappt. |
 | `--nur-schutz` | Nur `fail2ban` (und auf Wunsch SSH/Caddy) einrichten, der Empfänger läuft schon. |
 | `--ohne-fail2ban` | Schutz weglassen (nicht empfohlen). |
