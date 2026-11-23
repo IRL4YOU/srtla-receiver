@@ -80,10 +80,10 @@ Das Skript lädt das Image, startet den Empfänger, richtet `fail2ban` ein und z
 ## 5. Update
 
 ```bash
-bash update.sh
+cd ~/srtla-receiver && git pull && bash update.sh
 ```
 
-Das Skript sichert die Daten, holt die neueste Version und wechselt. Geht etwas schief, kehrt es von selbst zurück. Von Hand zurück:
+`git pull` holt zuerst die neuesten Skripte (auch die Sprachabfrage Deutsch/English), danach läuft das Update. Das Skript sichert die Daten, holt die neueste Version und wechselt. Geht etwas schief, kehrt es von selbst zurück. Von Hand zurück:
 
 ```bash
 bash update.sh --rueckweg
