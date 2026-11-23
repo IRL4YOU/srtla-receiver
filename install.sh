@@ -12,6 +12,315 @@
 #   --https-ip       stattdessen HTTPS ueber die IP mit selbst signiertem Zertifikat (Port 443, Browser warnt einmal)
 #   --ohne-https     Verwaltung nur lokal auf dem Server (Zugriff per SSH-Tunnel)
 #   --nur-schutz     nur fail2ban/SSH/Caddy einrichten (der Empfaenger laeuft schon, z. B. bei bestehenden Servern)
+#   --de / --en      Sprache der Meldungen (Deutsch oder English); ohne Angabe wird am Anfang gefragt
+#   Umgebung: IRL4YOU_IGNORE_NETS="192.168.1.0/24" (eigene Netze/Adressen, die nie gesperrt werden; empfohlen: das Heimnetz),
+#             IRL4YOU_IGNORE_SSH_CLIENT=1 (Adresse der aktuellen SSH-Sitzung nie sperren; 0 nur fuer Tests),
+#             IRL4YOU_BANTIME=1h (Sperrzeit), IRL4YOU_WEB_PORTS=8181 (Ports der Verwaltung, fuer die Sperre in DOCKER-USER)
+set -u
+L=""
+t() { if [ "$L" = en ]; then printf '%s' "$2"; else printf '%s' "$1"; fi; }
+cd "$(dirname "$0")" || exit 1
+
+LANGSEL=""; CADDY_DOMAIN=""; SSH_HAERTEN=0; JA=0; F2B=1; NUR_SCHUTZ=0; VERBOSE=0; OHNE_HTTPS=0; HTTPS_IP=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --caddy) CADDY_DOMAIN="${2:-}"; shift 2 ;;
+    --ssh-haerten) SSH_HAERTEN=1; shift ;;
+    --ja) JA=1; shift ;;
+    --ohne-fail2ban) F2B=0; shift ;;
+    --nur-schutz) NUR_SCHUTZ=1; shift ;;
+    --ausfuehrlich) VERBOSE=1; shift ;;
+    --ohne-https) OHNE_HTTPS=1; shift ;;
+    --https-ip) HTTPS_IP=1; shift ;;
+    --de) LANGSEL=de; shift ;;
+    --en) LANGSEL=en; shift ;;
+    *) echo "Unbekannte Option / Unknown option: $1"; exit 1 ;;
+  esac
+done
+
+LOG="/tmp/irl4you-install-$(date +%Y%m%d-%H%M%S).log"
+BAR_TOTAL="${IRL4YOU_BAR_TOTAL:-6}"; BAR_STEP="${IRL4YOU_BAR_OFFSET:-0}"
+[ "$NUR_SCHUTZ" -eq 1 ] && BAR_STEP=$((BAR_STEP+3))
+exec 3>&1
+if [ -t 3 ]; then C_G=$'\033[1;32m'; C_Y=$'\033[1;33m'; C_C=$'\033[1;36m'; C_R=$'\033[1;31m'; C_0=$'\033[0m'; else C_G=""; C_Y=""; C_C=""; C_R=""; C_0=""; fi
+# Sprache: --de/--en, sonst IRL4YOU_LANG (von get.sh), sonst Rueckfrage (nur bei Eingabe am Terminal), sonst Systemsprache
+L="${LANGSEL:-${IRL4YOU_LANG:-}}"
+if [ -z "$L" ]; then
+  case "${LC_ALL:-${LANG:-}}" in en*) L=en ;; *) L=de ;; esac
+  if [ "$JA" -eq 0 ] && [ "$NUR_SCHUTZ" -eq 0 ] && [ -t 0 ]; then
+    printf '\n%sSprache / Language:%s\n   1) Deutsch\n   2) English\n%sAuswahl / Choice (Enter = 1):%s ' "$C_Y" "$C_0" "$C_Y" "$C_0" >&3
+    read -r SP
+    case "$(printf '%s' "$SP" | tr -d ' \r')" in 2) L=en ;; *) L=de ;; esac
+  fi
+fi
+export IRL4YOU_LANG="$L"
+[ "$VERBOSE" -eq 0 ] && exec >"$LOG" 2>&1
+NOTES=""
+note() { NOTES="${NOTES}   - ${1}"$'\n'; }
+stage() {
+  BAR_STEP=$((BAR_STEP+1))
+  if [ "$VERBOSE" -eq 1 ]; then printf '== %s\n' "$1" >&3; return; fi
+  local w=30 f=$((BAR_STEP*30/BAR_TOTAL)) p=$((BAR_STEP*100/BAR_TOTAL))
+  [ "$f" -gt "$w" ] && f=$w
+  local fill rest
+  fill=$(printf '%*s' "$f" '' | tr ' ' '#'); rest=$(printf '%*s' "$((w-f))" '' | tr ' ' '-')
+  printf '\r%s[%s%s]%s %3d%%  %-44s\033[K' "$C_C" "$fill" "$rest" "$C_0" "$p" "$1" >&3
+}
+bei_ende() {
+  local rc=$?
+  if [ "$rc" -ne 0 ]; then
+    printf "$(t '\n\n%sFEHLER (Code %s).%s Die letzten Meldungen:\n' '\n\n%sERROR (code %s).%s The last messages:\n')" "$C_R" "$rc" "$C_0" >&3
+    [ "$VERBOSE" -eq 0 ] && { tail -n 15 "$LOG" >&3; printf "$(t 'Vollstaendiges Protokoll: %s\n' 'Full log: %s\n')" "$LOG" >&3; }
+  fi
+}
+trap bei_ende EXIT
+
+if [ -n "$CADDY_DOMAIN" ]; then MODE=domain; elif [ "$HTTPS_IP" -eq 1 ]; then MODE=httpsip; elif [ "$OHNE_HTTPS" -eq 1 ]; then MODE=lokal; else MODE=lan; fi
+
+# Nachfrage: Wo steht der Server? (Zuhause: Verwaltung ueber IP und Port; Rechenzentrum/Internet: HTTPS)
+if [ "$MODE" = lan ] && [ "$JA" -eq 0 ] && [ "$NUR_SCHUTZ" -eq 0 ] && [ -t 0 ]; then
+  printf "$(t '\n%sWo steht der Server?%s\n   1) Zuhause / eigenes Netz       (Verwaltung ueber IP und Port, unverschluesselt)\n   2) Rechenzentrum / Internet     (Verwaltung per HTTPS)\n%sAuswahl (Enter = 1):%s ' '\n%sWhere is the server located?%s\n   1) At home / own network        (administration via IP and port, unencrypted)\n   2) Data centre / internet       (administration via HTTPS)\n%sChoice (Enter = 1):%s ')" "$C_Y" "$C_0" "$C_Y" "$C_0" >&3
+  read -r ANTW
+  if [ "$(printf '%s' "$ANTW" | tr -d ' \r')" = 2 ]; then
+    printf "$(t '\n%sFuer die verschluesselte Verwaltung (Let'"'"'s Encrypt) muessen die Ports 80 und 443 aus dem Internet erreichbar sein.%s\n' '\n%sFor the encrypted administration (Let'"'"'s Encrypt) ports 80 and 443 must be reachable from the internet.%s\n')" "$C_C" "$C_0" >&3
+    while true; do
+      printf "$(t '%sEigene Domain eingeben (z. B. meine.domain.de, sie muss auf diesen Server zeigen). Enter = automatische Adresse aus der IP (sslip.io):%s ' '%sEnter your own domain (e.g. my.domain.com, it must point to this server). Enter = automatic address from the IP (sslip.io):%s ')" "$C_Y" "$C_0" >&3
+      read -r DOM
+      DOM=$(printf '%s' "$DOM" | tr -d ' \r')
+      if [ -z "$DOM" ]; then
+        PUBIP=$(curl -4 -fsS -m 8 https://api.ipify.org 2>/dev/null | tr -d ' \r\n')
+        if ! printf '%s' "$PUBIP" | grep -Eq '^[0-9]{1,3}(\.[0-9]{1,3}){3}$'; then
+          PUBIP=$(ip -4 -o addr show scope global 2>/dev/null | awk '$2 !~ /^(docker|br-|veth)/ {split($4,a,"/"); print a[1]; exit}')
+        fi
+        if printf '%s' "$PUBIP" | grep -Eq '^[0-9]{1,3}(\.[0-9]{1,3}){3}$'; then
+          CADDY_DOMAIN="$(printf '%s' "$PUBIP" | tr . -).sslip.io"; MODE=domain; break
+        else printf "$(t '%sDie Adresse des Servers konnte nicht ermittelt werden. Bitte eine Domain eingeben.%s\n' '%sThe address of the server could not be determined. Please enter a domain.%s\n')" "$C_R" "$C_0" >&3; fi
+      elif printf '%s' "$DOM" | grep -Eq '^[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?\.[A-Za-z]{2,}$'; then CADDY_DOMAIN="$DOM"; MODE=domain; break
+      else printf "$(t '%sKeine gueltige Domain.%s\n' '%sNot a valid domain.%s\n')" "$C_R" "$C_0" >&3; fi
+    done
+  fi
+fi
+
+if [ "$(id -u)" -eq 0 ]; then SUDO=""; else SUDO="sudo"; fi
+if docker info >/dev/null 2>&1; then D="docker"; else D="$SUDO docker"; fi
+frage() { [ "$JA" -eq 1 ] && return 0; printf '\n%s%s %s%s ' "$C_Y" "$1" "$(t '[j/N]' '[y/N]')" "$C_0" >&3; read -r a; [ "$a" = j ] || [ "$a" = J ] || [ "$a" = ja ] || [ "$a" = y ] || [ "$a" = Y ] || [ "$a" = yes ]; }
+ok() { printf '   OK: %s\n' "$1"; }
+
+if [ "$NUR_SCHUTZ" -eq 0 ]; then
+stage "$(t 'Voraussetzungen pruefen' 'Checking requirements')"
+command -v docker >/dev/null 2>&1 || { echo "$(t 'ABBRUCH: Docker fehlt. Installation siehe https://docs.docker.com/engine/install/ (danach dieses Skript erneut starten).' 'ABORTED: Docker is missing. See https://docs.docker.com/engine/install/ (then run this script again).')"; exit 1; }
+$D compose version >/dev/null 2>&1 || { echo "$(t 'ABBRUCH: Docker Compose fehlt (Paket docker-compose-plugin).' 'ABORTED: Docker Compose is missing (package docker-compose-plugin).')"; exit 1; }
+[ -n "$SUDO" ] && ! sudo -n true 2>/dev/null && echo "$(t '   Hinweis: fuer einzelne Schritte wird gleich das sudo-Passwort abgefragt.' '   Note: the sudo password will be requested for some steps.')"
+[ -f compose.yaml ] || { echo "$(t 'ABBRUCH: compose.yaml fehlt (Skript im Paketordner ausfuehren).' 'ABORTED: compose.yaml is missing (run the script in the package folder).')"; exit 1; }
+if $D compose ps -q receiver 2>/dev/null | grep -q .; then echo "$(t 'ABBRUCH: Der Empfaenger laeuft schon. Fuer Updates: bash update.sh' 'ABORTED: The receiver is already running. For updates: bash update.sh')"; exit 1; fi
+
+stage "$(t 'Image laden und Schluessel anlegen (dauert etwas)' 'Loading image and creating key (takes a while)')"
+# Der Container-Benutzer hat die Nummer 101. Nur er darf die Datei lesen; auf dem Server braucht man dafuer sudo.
+IMG=$(ls -1 srtla-*.tar.gz 2>/dev/null | sort -V | tail -1)
+if [ -n "$IMG" ]; then
+  # Image aus einer mitgelieferten Datei (ohne Internet)
+  if [ -f "$IMG.sha256" ]; then
+    if command -v sha256sum >/dev/null 2>&1; then sha256sum -c "$IMG.sha256" || exit 1; else shasum -a 256 -c "$IMG.sha256" || exit 1; fi
+  fi
+  $D load -i "$IMG" | tail -1
+else
+  REF=$(awk '/^[[:space:]]*image:/{print $2; exit}' compose.yaml)
+  echo "$(t "   Image $REF wird heruntergeladen ..." "   Downloading image $REF ...")"
+  $D pull "$REF" >/dev/null 2>&1 || { echo "$(t "ABBRUCH: $REF konnte nicht heruntergeladen werden (Internetverbindung? Oder die Image-Datei srtla-*.tar.gz in diesen Ordner legen)." "ABORTED: $REF could not be downloaded (internet connection? Or put the image file srtla-*.tar.gz into this folder).")"; exit 1; }
+fi
+mkdir -p secrets && chmod 700 secrets
+if $SUDO test -s secrets/enc.key; then
+  ok "$(t 'secrets/enc.key ist schon vorhanden (wird nicht ueberschrieben)' 'secrets/enc.key already exists (not overwritten)')"
+else
+  od -An -N32 -tx1 /dev/urandom | tr -d ' \n' > secrets/enc.key
+  $SUDO chown 101:102 secrets/enc.key && $SUDO chmod 400 secrets/enc.key
+  ok "$(t 'secrets/enc.key angelegt (nur der Container-Benutzer darf sie lesen)' 'secrets/enc.key created (only the container user may read it)')"
+fi
+$SUDO chmod 700 secrets 2>/dev/null; $SUDO chown 0:0 secrets 2>/dev/null || true
+# secrets/ gehoert jetzt root; der Docker-Daemon (root) kann die Datei einbinden.
+
+stage "$(t 'Empfaenger starten' 'Starting receiver')"
+if [ "$MODE" = lan ]; then
+  # Verwaltung direkt ueber IP und Port erreichbar machen (Override, damit compose.yaml unveraendert bleibt und Updates weiter gehen)
+  printf 'services:\n  receiver:\n    ports: !override\n      - "8383:8383/udp"\n      - "8384:8384/udp"\n      - "8282:8282/udp"\n      - "8181:8181/tcp"\n' > compose.override.yaml
+fi
+$D compose up -d 2>&1 | tail -3
+i=0; h=""
+CID=$($D compose ps -q receiver | head -1)
+while [ "$i" -lt 90 ]; do h=$($D inspect --format '{{.State.Health.Status}}' "$CID" 2>/dev/null); [ "$h" = healthy ] && break; i=$((i+1)); sleep 1; done
+[ "$h" = healthy ] || { echo "$(t "FEHLER: Empfaenger wurde nicht gesund. Log: $D compose logs --tail 50" "ERROR: The receiver did not become healthy. Log: $D compose logs --tail 50")"; exit 1; }
+ok "$(t 'Empfaenger laeuft (healthy)' 'Receiver is running (healthy)')"
+fi
+EINMAL=$($D compose logs receiver 2>&1 | grep -a ERSTEINRICHTUNG | tail -1 | sed 's/.*Einmalcode //' | tr -d '\r')
+
+stage "$(t 'fail2ban einrichten' 'Setting up fail2ban')"
+if [ "$F2B" -eq 1 ]; then
+  if command -v apt-get >/dev/null 2>&1; then
+    $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y fail2ban python3-systemd >/dev/null 2>&1 && ok "$(t 'fail2ban installiert' 'fail2ban installed')" || note "$(t "fail2ban konnte nicht installiert werden (apt), siehe Protokoll $LOG" "fail2ban could not be installed (apt), see log $LOG")"
+    # Eigene Adresse der aktuellen SSH-Sitzung nicht aussperren
+    MYIP=$(echo "${SSH_CLIENT:-}" | awk '{print $1}')
+    IGN="127.0.0.1/8 ::1"; [ -n "$MYIP" ] && [ "${IRL4YOU_IGNORE_SSH_CLIENT:-1}" = 1 ] && IGN="$IGN $MYIP"
+    [ -n "${IRL4YOU_IGNORE_NETS:-}" ] && IGN="$IGN $IRL4YOU_IGNORE_NETS"
+    $SUDO mkdir -p /etc/fail2ban/filter.d /etc/fail2ban/jail.d
+    $SUDO cp fail2ban/filter.d/irl4you-web.conf /etc/fail2ban/filter.d/irl4you-web.conf
+    $SUDO cp fail2ban/filter.d/irl4you-recidive.conf /etc/fail2ban/filter.d/irl4you-recidive.conf
+    $SUDO mkdir -p /etc/fail2ban/action.d /etc/irl4you
+    $SUDO cp fail2ban/action.d/irl4you-event.conf /etc/fail2ban/action.d/irl4you-event.conf
+    $SUDO install -m 755 fail2ban/irl4you-f2b-event /usr/local/sbin/irl4you-f2b-event
+    # Ereignisdatei im Datenvolumen der Verwaltung (der Container liest sie): Pfad des Volumes ermitteln
+    DATADIR="${IRL4YOU_DATA_DIR:-}"
+    if [ -z "$DATADIR" ]; then
+      CN=$($D compose ps -q receiver 2>/dev/null | head -1); [ -n "$CN" ] || CN=irl4you-srtla-receiver
+      DATADIR=$($D inspect "$CN" --format '{{range .Mounts}}{{if eq .Destination "/data"}}{{.Source}}{{end}}{{end}}' 2>/dev/null)
+    fi
+    if [ -n "$DATADIR" ] && $SUDO test -d "$DATADIR"; then
+      echo "$DATADIR/fail2ban-events.log" | $SUDO tee /etc/irl4you/f2b-logfile >/dev/null
+      $SUDO touch "$DATADIR/fail2ban-events.log" && $SUDO chmod 644 "$DATADIR/fail2ban-events.log"
+      ok "$(t 'Sperren werden im Sicherheitsprotokoll der Verwaltung angezeigt (ohne Adressen)' 'Blocks are shown in the security log of the administration (without addresses)')"
+    else
+      note "$(t 'Datenvolumen nicht gefunden: Sperren erscheinen nicht in der Verwaltung (IRL4YOU_DATA_DIR=... setzen)' 'Data volume not found: blocks will not appear in the administration (set IRL4YOU_DATA_DIR=...)')"
+    fi
+    $SUDO mkdir -p /etc/fail2ban/fail2ban.d
+    printf '[Definition]\n# Sperren sollen auch einen Neustart ueberleben (Wochensperre): Standard waere 1 Tag\ndbpurgeage = 8d\n' | $SUDO tee /etc/fail2ban/fail2ban.d/irl4you.local >/dev/null
+    BT="${IRL4YOU_BANTIME:-1h}"; WEBPORTS="${IRL4YOU_WEB_PORTS:-8181}"
+    $SUDO tee /etc/fail2ban/jail.d/irl4you.local >/dev/null <<EOF
+[DEFAULT]
+bantime = $BT
+findtime = 10m
+maxretry = 5
+ignoreip = $IGN
+
+[sshd]
+enabled = true
+backend = systemd
+action = %(action_)s
+         irl4you-event[name=%(__name__)s]
+
+# Weboberflaeche hinter Caddy (Ports 80/443 gehoeren dem Rechner selbst: Kette INPUT)
+[irl4you-web]
+enabled = true
+filter = irl4you-web
+action = %(action_)s
+         irl4you-event[name=%(__name__)s]
+backend = polling
+logpath = /var/lib/docker/containers/*/*-json.log
+maxretry = 10
+port = http,https
+banaction = iptables-multiport
+
+# Direkter Zugriff auf Port 8181 (von Docker veroeffentlicht: Kette DOCKER-USER)
+[irl4you-web-docker]
+enabled = true
+filter = irl4you-web
+action = %(action_)s
+         irl4you-event[name=%(__name__)s]
+backend = polling
+logpath = /var/lib/docker/containers/*/*-json.log
+maxretry = 10
+port = $WEBPORTS
+chain = DOCKER-USER
+banaction = iptables-multiport
+
+# Wiederholungstaeter: 10 Sperren (SSH oder Weboberflaeche) innerhalb von 7 Tagen: eine Woche gesperrt.
+# Nur SSH, http und https; die Senderports (SRTLA/SRT) bleiben absichtlich frei: Mobilfunknetze teilen sich Adressen
+# (CGNAT), ein Scanner aus demselben Netz soll nicht die eigene Sendeverbindung kappen.
+[irl4you-recidive]
+enabled = true
+filter = irl4you-recidive
+action = %(action_)s
+         irl4you-event[name=%(__name__)s]
+backend = polling
+logpath = /var/log/fail2ban.log
+maxretry = 10
+findtime = 7d
+bantime = 1w
+port = ssh,http,https
+banaction = iptables-multiport
+EOF
+    $SUDO systemctl enable --now fail2ban >/dev/null 2>&1; $SUDO systemctl restart fail2ban
+    sleep 3
+    $SUDO fail2ban-client status 2>/dev/null | sed -n '1,3p'
+    [ -n "$MYIP" ] && ok "$(t "Ihre aktuelle Adresse $MYIP wird nicht gesperrt (ignoreip)" "Your current address $MYIP will never be blocked (ignoreip)")"
+  else
+    note "$(t 'Kein apt gefunden: fail2ban bitte von Hand einrichten (fail2ban/filter.d/irl4you-web.conf und die Jails aus install.sh)' 'No apt found: please set up fail2ban by hand (fail2ban/filter.d/irl4you-web.conf and the jails from install.sh)')"
+  fi
+fi
+
+stage "$(t 'SSH-Absicherung' 'SSH hardening')"
+if [ "$SSH_HAERTEN" -eq 1 ]; then
+  KEYS=0; for f in "$HOME/.ssh/authorized_keys"; do [ -s "$f" ] && KEYS=1; done
+  if [ "$KEYS" -ne 1 ]; then
+    note "$(t "SSH NICHT geaendert: in $HOME/.ssh/authorized_keys ist kein Schluessel hinterlegt (sonst wuerden Sie sich aussperren)" "SSH NOT changed: no key is stored in $HOME/.ssh/authorized_keys (you would lock yourself out)")"
+  elif frage "$(t '   Passwort-Anmeldung per SSH abschalten? Sie melden sich danach nur noch mit Ihrem Schluessel an.' '   Disable password login over SSH? Afterwards you can only log in with your key.')"; then
+    $SUDO mkdir -p /etc/ssh/sshd_config.d
+    printf 'PasswordAuthentication no\nKbdInteractiveAuthentication no\nPermitRootLogin prohibit-password\n' | $SUDO tee /etc/ssh/sshd_config.d/10-irl4you.conf >/dev/null
+    if $SUDO sshd -t 2>/dev/null; then $SUDO systemctl reload ssh 2>/dev/null || $SUDO systemctl reload sshd 2>/dev/null; ok "$(t 'SSH nur noch mit Schluessel' 'SSH now key-only')"; note "$(t 'SSH nur noch mit Schluessel: bitte in einem zweiten Fenster neu anmelden und pruefen (die jetzige Sitzung bleibt offen)' 'SSH now key-only: please log in again in a second window to check (the current session stays open)')"; else $SUDO rm -f /etc/ssh/sshd_config.d/10-irl4you.conf; note "$(t 'SSH-Konfigurationsfehler, nichts geaendert' 'SSH configuration error, nothing changed')"; fi
+  fi
+fi
+
+stage "$(t 'HTTPS einrichten' 'Setting up HTTPS')"
+ADRESSE=""; HOST=""; SELBST=0
+IPS=$(ip -4 -o addr show scope global 2>/dev/null | awk '$2 !~ /^(docker|br-|veth)/ {split($4,a,"/"); print a[1]}')
+IP1=$(echo "$IPS" | head -1)
+if [ "$MODE" = domain ] || [ "$MODE" = httpsip ]; then
+  command -v caddy >/dev/null 2>&1 || $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y caddy >/dev/null 2>&1
+  if command -v caddy >/dev/null 2>&1; then
+    if [ -n "$CADDY_DOMAIN" ]; then
+      printf '%s {\n    reverse_proxy 127.0.0.1:8181\n}\n' "$CADDY_DOMAIN" | $SUDO tee /etc/caddy/Caddyfile >/dev/null
+      ADRESSE="https://$CADDY_DOMAIN/schluessel"; HOST="$CADDY_DOMAIN"
+    elif [ -n "$IP1" ]; then
+      SITES=$(echo "$IPS" | sed 's#^#https://#' | paste -sd, - | sed 's/,/, /g')
+      printf '{\n    default_sni %s\n    auto_https disable_redirects\n}\n%s {\n    tls internal\n    reverse_proxy 127.0.0.1:8181\n}\n' "$IP1" "$SITES" | $SUDO tee /etc/caddy/Caddyfile >/dev/null
+      ADRESSE="https://$IP1/schluessel"; HOST="$IP1"; SELBST=1
+    fi
+    if [ -n "$ADRESSE" ]; then
+      $SUDO systemctl enable --now caddy >/dev/null 2>&1; $SUDO systemctl reload caddy 2>/dev/null || $SUDO systemctl restart caddy
+      ok "$(t "Caddy eingerichtet: $ADRESSE" "Caddy set up: $ADRESSE")"
+    fi
+  else
+    note "$(t 'Caddy konnte nicht installiert werden (apt): https://caddyserver.com/docs/install' 'Caddy could not be installed (apt): https://caddyserver.com/docs/install')"
+  fi
+fi
+if [ -z "$ADRESSE" ]; then
+  HOST="${IP1:-SERVER}"
+  if [ "$MODE" = lan ]; then
+    ADRESSE="http://$HOST:8181/schluessel"
+    note "$(t 'Die Verwaltung ist unverschluesselt: nur im eigenen Netz verwenden. Fuer das Internet HTTPS mit Domain einrichten (--caddy DOMAIN).' 'The administration is unencrypted: use it only in your own network. For the internet, set up HTTPS with a domain (--caddy DOMAIN).')"
+  else
+    ADRESSE="http://localhost:8181/schluessel  $(t '(nur per SSH-Tunnel: ssh -L 8181:127.0.0.1:8181 BENUTZER@SERVER)' '(only via SSH tunnel: ssh -L 8181:127.0.0.1:8181 USER@SERVER)')"
+  fi
+fi
+[ "$VERBOSE" -eq 0 ] && { printf '\r%s[%s]%s 100%%  %-44s\033[K\n' "$C_G" "##############################" "$C_0" "$(t 'Fertig' 'Done')" >&3; }
+{
+echo
+printf '%s================================================================%s\n' "$C_G" "$C_0"
+printf "$(t '%s IRL4YOU SRTLA Receiver ist installiert%s\n' '%s IRL4YOU SRTLA Receiver is installed%s\n')" "$C_G" "$C_0"
+printf '%s================================================================%s\n' "$C_G" "$C_0"
+printf "$(t ' Verwaltung:   %s%s%s\n' ' Administration: %s%s%s\n')" "$C_C" "$ADRESSE" "$C_0"
+if [ -n "$EINMAL" ]; then printf "$(t ' Einmalcode:   %s%s%s   (nur fuer die erste Anmeldung)\n' ' One-time code:  %s%s%s   (for the first login only)\n')" "$C_Y" "$EINMAL" "$C_0"; else printf "$(t ' Einmalcode:   schon eingerichtet\n' ' One-time code:  already set up\n')"; fi
+printf "$(t ' Senden:       %sSRTLA %s:8383%s   %sSRT %s:8384%s\n' ' Send to:        %sSRTLA %s:8383%s   %sSRT %s:8384%s\n')" "$C_C" "$HOST" "$C_0" "$C_C" "$HOST" "$C_0"
+[ "$SELBST" -eq 1 ] && printf "$(t ' Zertifikat:   Der Browser warnt einmal (selbst signiert). Auf "Erweitert" und "Weiter" klicken. Mit eigener Domain entfaellt das (--caddy DOMAIN).\n' ' Certificate:  The browser warns once (self-signed). Click "Advanced" and "Continue". With your own domain this is not needed (--caddy DOMAIN).\n')"
+if [ "$MODE" = lan ]; then printf "$(t ' Ports:        8383/udp, 8384/udp (Senden) und 8282/udp (OBS) freigeben; 8181/tcp nur im eigenen Netz\n' ' Ports:          open 8383/udp, 8384/udp (sending) and 8282/udp (OBS); 8181/tcp only in your own network\n')"; else printf "$(t ' Ports freigeben: 8383/udp, 8384/udp (Senden), 8282/udp (OBS), 443/tcp%s (Router und Firewall)\n' ' Open ports:     8383/udp, 8384/udp (sending), 8282/udp (OBS), 443/tcp%s (router and firewall)\n')" "$([ -n "$CADDY_DOMAIN" ] && echo ', 80/tcp')"; fi
+printf "$(t ' Sicherung:    Ordner secrets/ zusammen mit den Sicherungen aufbewahren, nicht weitergeben.\n' ' Backup:        keep the folder secrets/ together with your backups, do not pass it on.\n')"
+printf "$(t ' Update:       cd %s && git pull && bash update.sh\n' ' Update:        cd %s && git pull && bash update.sh\n')" "$(pwd)"
+if [ -n "$NOTES" ]; then printf "$(t '%s Hinweise:%s\n%s' '%s Notes:%s\n%s')" "$C_Y" "$C_0" "$NOTES"; fi
+[ "$VERBOSE" -eq 0 ] && printf "$(t ' Protokoll:    %s\n' ' Log:           %s\n')" "$LOG"
+printf '%s================================================================%s\n' "$C_G" "$C_0"
+} >&3
+#!/bin/bash
+# IRL4YOU SRTLA-Empfaenger: Erstinstallation (Komplettpaket). Das Image kommt von Docker Hub oder aus einer Datei srtla-*.tar.gz im Ordner.
+# Aufruf im Paketordner:   bash install.sh [--caddy DOMAIN] [--ssh-haerten] [--ja] [--ohne-fail2ban]
+#
+#   Immer:    Schluesseldatei anlegen (getrennt von den Daten), Image laden, Empfaenger starten, Einmalcode zeigen.
+#   fail2ban: wird mit installiert (SSH und Weboberflaeche). Mit --ohne-fail2ban ueberspringen (nicht empfohlen).
+#   --caddy DOMAIN   HTTPS fuer die Verwaltung (Caddy mit automatischem Zertifikat). DOMAIN zeigt auf diesen Server.
+#   --ssh-haerten    SSH nur noch mit Schluessel (Passwort-Anmeldung aus). Nur wenn ein Schluessel hinterlegt ist.
+#   --ja             Rueckfragen automatisch mit Ja beantworten.
+#   --ausfuehrlich   alle Meldungen zeigen statt nur den Fortschrittsbalken (Protokoll liegt sonst in /tmp/irl4you-install-*.log)
+#   (ohne --caddy)  fragt, wo der Server steht: 1 = Zuhause: Verwaltung direkt ueber IP und Port: http://IP:8181/schluessel (fuer das eigene Netz, unverschluesselt)
+#   --https-ip       stattdessen HTTPS ueber die IP mit selbst signiertem Zertifikat (Port 443, Browser warnt einmal)
+#   --ohne-https     Verwaltung nur lokal auf dem Server (Zugriff per SSH-Tunnel)
+#   --nur-schutz     nur fail2ban/SSH/Caddy einrichten (der Empfaenger laeuft schon, z. B. bei bestehenden Servern)
 #   Umgebung: IRL4YOU_IGNORE_NETS="192.168.1.0/24" (eigene Netze/Adressen, die nie gesperrt werden; empfohlen: das Heimnetz),
 #             IRL4YOU_IGNORE_SSH_CLIENT=1 (Adresse der aktuellen SSH-Sitzung nie sperren; 0 nur fuer Tests),
 #             IRL4YOU_BANTIME=1h (Sperrzeit), IRL4YOU_WEB_PORTS=8181 (Ports der Verwaltung, fuer die Sperre in DOCKER-USER)
