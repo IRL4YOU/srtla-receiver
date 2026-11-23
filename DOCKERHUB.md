@@ -8,7 +8,7 @@ Empfänger für IRL-Streaming: nimmt gebündelte Mobilfunk-Übertragungen (SRTLA
 
 Anleitung und Quelltext der geänderten Open-Source-Teile: https://github.com/IRL4YOU/srtla-receiver
 
-**Tags:** `1.0.0` (feste Version), `latest` (neueste Version, wird von `update.sh` verwendet). Das Image ist für `amd64` gebaut.
+**Tags:** `1.0.1` (feste Version, zweisprachige Oberfläche), `1.0.0`, `latest` (neueste Version, wird von `update.sh` verwendet). Das Image ist für `amd64` gebaut.
 
 **Nur das Image ohne Paket:** läuft ohne `fail2ban` und ohne die Trennung des Schlüssels vom Datenvolumen. Das Paket ist der empfohlene Weg.
 
