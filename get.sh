@@ -52,7 +52,7 @@ else SUDO="sudo"; fi
 command -v apt-get >/dev/null 2>&1 || { echo "$(t 'Nur Ubuntu/Debian (apt) wird unterstuetzt.' 'Only Ubuntu/Debian (apt) is supported.')" >&3; exit 1; }
 if [ -n "$SUDO" ] && ! command -v sudo >/dev/null 2>&1; then echo "$(t 'sudo fehlt. Als root starten oder sudo installieren.' 'sudo is missing. Run as root or install sudo.')" >&3; exit 1; fi
 # Passwortabfrage fuer sudo gleich zu Beginn, solange die Ausgabe noch sichtbar ist
-if [ -n "$SUDO" ]; then $SUDO -v || exit 1; fi
+if [ -n "$SUDO" ]; then $SUDO -n true 2>/dev/null || $SUDO -v || exit 1; fi
 
 [ "$VERBOSE" -eq 0 ] && exec >"$LOG" 2>&1
 export DEBIAN_FRONTEND=noninteractive NEEDRESTART_MODE=a
