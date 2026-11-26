@@ -273,6 +273,18 @@ if [ "$MODE" = domain ] || [ "$MODE" = httpsip ]; then
       printf '{\n    default_sni %s\n    auto_https disable_redirects\n}\n%s {\n    tls internal\n    reverse_proxy 127.0.0.1:8181\n}\n' "$IP1" "$SITES" | $SUDO tee /etc/caddy/Caddyfile >/dev/null
       ADRESSE="https://$IP1/schluessel"; HOST="$IP1"; SELBST=1
     fi
+    # Firewall der VM: Manche Images (z. B. Oracle Ubuntu) lassen in INPUT nur Port 22 durch und lehnen danach alles ab.
+    # Caddy laeuft auf dem Rechner selbst und braucht 80/443 (Zertifikat von Let's Encrypt und HTTPS). Die Regel kommt VOR die Sperre.
+    if [ -n "$ADRESSE" ] && command -v iptables >/dev/null 2>&1; then
+      if ! $SUDO iptables -C INPUT -p tcp -m multiport --dports 80,443 -j ACCEPT 2>/dev/null; then
+        FWPOS=$($SUDO iptables -L INPUT -n --line-numbers 2>/dev/null | awk '($2=="REJECT"||$2=="DROP") && ($3=="all"||$3=="0") && $5=="0.0.0.0/0" && $6=="0.0.0.0/0" {print $1; exit}')
+        if [ -n "$FWPOS" ] && $SUDO iptables -I INPUT "$FWPOS" -p tcp -m multiport --dports 80,443 -j ACCEPT 2>/dev/null; then
+          if [ -d /etc/iptables ]; then $SUDO sh -c 'iptables-save > /etc/iptables/rules.v4' 2>/dev/null; fi
+          ok "$(t 'Firewall des Servers: Ports 80 und 443 geoeffnet (fuer HTTPS und das Zertifikat)' 'Server firewall: ports 80 and 443 opened (for HTTPS and the certificate)')"
+          note "$(t 'Bei Cloud-Anbietern (z. B. Oracle) zusaetzlich 80/tcp und 443/tcp in der Sicherheitsliste/Firewall des Anbieters freigeben.' 'With cloud providers (e.g. Oracle) also open 80/tcp and 443/tcp in the provider security list/firewall.')"
+        fi
+      fi
+    fi
     if [ -n "$ADRESSE" ]; then
       $SUDO systemctl enable --now caddy >/dev/null 2>&1; $SUDO systemctl reload caddy 2>/dev/null || $SUDO systemctl restart caddy
       ok "$(t "Caddy eingerichtet: $ADRESSE" "Caddy set up: $ADRESSE")"
